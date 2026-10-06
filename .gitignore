@@ -1,0 +1,7 @@
+.venv/
+sitl-state/
+*.log
+*.slxc
+.DS_Store
+NN/
+verify_*

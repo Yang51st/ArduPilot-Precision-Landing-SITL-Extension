@@ -1,0 +1,19 @@
+{
+  "marker_image": "markers/eAruco.png",
+  "marker_family": "DICT_6X6_250",
+  "marker_id": 0,
+  "marker_size_m": 0.469,
+  "outer_marker_size_m": 4.0,
+  "marker_image_width_m": 4.492,
+  "marker_north_m": 0.0,
+  "marker_east_m": 0.0,
+  "marker_yaw_deg": 0.0,
+  "ground_down_m": 0.0,
+  "camera_hfov_deg": 70.0,
+  "camera_width": 320,
+  "camera_height": 240,
+  "camera_fps": 20.0,
+  "frame_host": "127.0.0.1",
+  "frame_port": 5600,
+  "mavlink_endpoint": "tcp:127.0.0.1:5763"
+}

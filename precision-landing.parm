@@ -1,0 +1,14 @@
+# MAVLink companion-computer precision landing defaults for Copter SITL.
+PLND_ENABLED       1
+PLND_TYPE          1
+PLND_EST_TYPE      0
+PLND_LAG           0.05
+PLND_XY_DIST_MAX   0
+PLND_STRICT        0
+PLND_ALT_MIN       0
+PLND_ALT_MAX       0
+PLND_OPTIONS       0
+PLND_CAM_POS_X     0
+PLND_CAM_POS_Y     0
+PLND_CAM_POS_Z     0
+SERIAL2_PROTOCOL   2
