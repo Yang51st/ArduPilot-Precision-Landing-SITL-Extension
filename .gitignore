@@ -6,3 +6,5 @@ sitl-state/
 NN/
 verify_*
 slprj/
+*.autosave
+__pycache__/
