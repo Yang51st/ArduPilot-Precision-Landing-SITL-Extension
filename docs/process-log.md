@@ -1,6 +1,8 @@
 # Process log
 
-A running record of what was actually done, in order, including the dead ends. README.md says how to do things; this file says what happened. Newest entries at the bottom. Add an entry for every session that touches the Pi or the Python bridge.
+A running record of what was actually done, in order, including the dead ends. Newest entries at the bottom. Add an entry for every session that touches the Pi or the Python bridge.
+
+Related: [`docs/status.md`](status.md) is the current snapshot, [`docs/next-steps.md`](next-steps.md) is the roadmap, [`README.md`](../README.md) is the how-to, [`CLAUDE.md`](../CLAUDE.md) holds the Pi rules.
 
 ## 2026-10-29: split the bridge, prepare the Pi
 
@@ -158,3 +160,53 @@ Josef ran `sudo apt-get install -y --no-install-recommends rpicam-apps-lite` (ap
 - Decide what to do with the untracked rpi-imager files (`cache/`, `create_local_json.py`, `os_list_local.rpi-imager-manifest`).
 - Commit.
 - Deferred until a flight controller is wired: UART, serial endpoint and baud, autostart on boot, the real-hardware parameter check.
+
+## 2026-10-31: marker ID changed to 9
+
+Josef changed `marker_id` from 0 to 9 in both `aruco_landing_config.json` and `pi/pi_landing_config.json` to match the printed marker. Claude tidied stray spaces in the Pi config, ran `scripts/test_core.py` (passes; the test builds its marker from the config so it now exercises ID 9), confirmed the Pi was up, and ran `pi/deploy_to_pi.ps1`. Post-deploy check unchanged from 2026-10-29 (OpenCV 4.10.0 aruco True, imx219 listed). The Pi config now reads ID 9.
+
+The bridge was already running on the Pi from Josef's SSH session with the old config loaded, so it still looks for ID 0 until restarted. Lesson: a config deploy does not take effect until the bridge is stopped and started again.
+
+Open question: `aruco_landing_config.json` now says ID 9 but `markers/eAruco.png`, which Simulink renders, is still the ID 0 image. The SITL bridge will not detect until that image is regenerated with ID 9 or the SITL config goes back to 0.
+
+**Marker not detected after the ID change.** Josef restarted the bridge (new pid, started 23:06) and reported no detections. Claude could not grab a frame to look at: the publisher serves one viewer at a time and Josef's viewer held the slot, so a second connection accepted but never received data. The bridge gave no clue either, because a marker with a different ID or dictionary was reported as a bare "target not visible". Fix: `ArucoDetector` now remembers every non-target ID it sees and the status line prints "target id 9 not visible (saw other marker ids: 0; check marker_id in the config)". Test passes; redeployed. Takes effect once the bridge is restarted.
+
+**Marker family changed to DICT_4X4_250.** Josef changed `marker_family` in both configs from `DICT_6X6_250` to `DICT_4X4_250` to match the printed marker, then ran the test and deploy himself. Confirmed afterwards: `test_core.py` passes with the 4x4 family, the Pi config reads 4x4 ID 9, and the deployed `precland_core.py` is byte-identical to the repo copy.
+
+**Truncated command.** A bridge start failed with `FileNotFoundError: 'pi_landing_config'`. Cause: the command had been copied from a message that was cut off mid-line, so `.json` was missing. Not a bug.
+
+**Docs restructured.** Added `docs/status.md` as the entry point for new sessions, cross-linked all four documents, and updated the roadmap. Whether the 4x4 ID 9 print is now detected was not recorded by the end of the session; `docs/status.md` flags it as unconfirmed.
+
+## 2026-10-31: one size per marker ID, height-based scale logic removed
+
+### Why
+
+Josef reported the Pi dry run printing "scale unresolved" and a 1.4 m distance for a 3.2 cm print. Investigation: the message was structural, not a detection problem. The Pi config still carried the SITL pair `marker_size_m` 0.469 m and `outer_marker_size_m` 4.0 m, which put the core in two-size mode, and a dry run never receives a vehicle height, so every detection stayed unresolved. The 1.4 m came from the 0.469 m size applied to a 3.2 cm print (ratio 14.7, so the real distance was about 9.5 cm). Before the split the same case was silently dropped; the split only made it visible.
+
+Checked the 2027 SAE Aero Design rules PDF (version 2027.0, 57 pages) for ArUco guidance: no mention of ArUco, nested markers or fiducials anywhere. Relevant constraints are in section 8.6: the DLZ is an 8 ft by 8 ft coroplast pad the team builds, no electronics, batteries or magnets in it, no material under it, and section 2.20 bans lasers for marking a landing zone. Marker design is entirely the team's choice.
+
+### Change
+
+Josef asked to replace the size pair with a list of markers, each ID with its own size. Done:
+
+- `scripts/precland_core.py`: new `parse_markers` reads `"markers": [{"id": 9, "size_m": 2.2}, {"id": 10, "size_m": 0.3}]` and rejects the old keys with a message naming them, empty lists, duplicate IDs and non-positive sizes. `ArucoDetector` takes a `{id: size}` dict; `detect` looks the size up from the ID, so there is nothing to disambiguate, and when several listed markers are visible it uses the one covering the most pixels. Removed: `scale_resolved`, `expected_camera_z_m`, `local_down_m`, the LOCAL_POSITION_NED message-interval request and the "unresolved" counter. The status line now reads `id 9 (0.032 m) body_frd=[...] m distance=... m`, or `marker ids 9, 10 not visible (saw other marker ids: 0; ...)`.
+- `scripts/pi_landing_bridge.py`: overlay no longer appends "(scale?)".
+- `scripts/test_core.py`: rewritten. Each configured marker alone gives its own size and a distance within 5 percent; with two markers visible the larger in pixels wins regardless of physical size; an unlisted ID is ignored but remembered; body-frame mapping and header round-trip as before.
+- `aruco_landing_config.json`: `markers` ID 9 at 2.2 m and ID 10 at 0.3 m as a first guess for the 2.44 m SAE pad. `marker_image_width_m` and `ground_down_m` stay because Simulink reads them. `markers/eAruco.png` still does not match and must be regenerated.
+- `pi/pi_landing_config.json`: `markers` ID 9 at 0.032 m, the size Josef gave for the print; `ground_down_m` and `marker_image_width_m` dropped.
+- `aruco_camera_config.m`: falls back to the largest `markers` size when `marker_image_width_m` is absent; comment updated.
+- README, `docs/next-steps.md`, `docs/status.md` updated to match.
+
+Restore point: the pre-change working tree was saved as a patch in the session scratchpad; the last commit `fb86663` predates the 2026-10-31 edits.
+
+### Verified
+
+`python scripts\test_core.py` passes (22 checks). Bad configs are rejected with the intended messages. The Simulink bridge starts in dry run and prints `Markers: DICT_4X4_250, ID 9 at 2.200 m, ID 10 at 0.300 m`. Deployed with `pi\deploy_to_pi.ps1`; post-deploy check unchanged (OpenCV 4.10.0 aruco True, imx219 listed) and the three Pi files are byte-identical to the repo by md5.
+
+The bridge running on the Pi (pid 3614, in Josef's SSH terminal) still has the old code loaded. It must be stopped with Ctrl+C and started again before the new config takes effect. Claude did not kill it because it belongs to an interactive session.
+
+### Open
+
+- Nested placement for the competition pad: a 2.2 m 4x4 marker has 0.367 m cells, and a 0.3 m marker inside a white cell leaves too little quiet zone and flips that cell black for the outer decoder. Needs a smaller inner marker, a different placement, or a test of the dictionary's error correction.
+- Regenerate the SITL marker picture for IDs 9 and 10 and set `marker_image_width_m` to its width.
+- Measure the 3.2 cm print with a ruler to confirm `size_m`.

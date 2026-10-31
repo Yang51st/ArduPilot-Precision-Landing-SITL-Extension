@@ -67,10 +67,6 @@ class Detection:
     marker_size_m: float
     corners: np.ndarray
     camera_xyz_m: np.ndarray
-    # False when the marker was seen but the vehicle height needed to choose
-    # between the embedded and outer marker scales was not available yet.
-    # Unresolved detections are reported but never sent to ArduPilot.
-    scale_resolved: bool = True
 
     @property
     def body_frd_m(self) -> np.ndarray:
@@ -86,12 +82,11 @@ class ArucoDetector:
     def __init__(
         self,
         marker_family: str,
-        marker_id: int,
-        marker_size_m: float,
-        outer_marker_size_m: float | None,
+        marker_sizes_m: dict[int, float],
         horizontal_fov_deg: float,
         calibration_file: Path | None = None,
     ) -> None:
+        """marker_sizes_m maps each ArUco ID on the landing pad to its side length."""
         if not hasattr(cv2, "aruco"):
             raise RuntimeError("this OpenCV build has no aruco module (need OpenCV 4.7+ or opencv-contrib)")
         if not hasattr(cv2.aruco, marker_family):
@@ -100,11 +95,10 @@ class ArucoDetector:
         dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
         parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(dictionary, parameters)
-        self.marker_id = marker_id
-        self.marker_size_m = marker_size_m
-        self.marker_sizes_m = [marker_size_m]
-        if outer_marker_size_m is not None:
-            self.marker_sizes_m.append(outer_marker_size_m)
+        if not marker_sizes_m:
+            raise ValueError("at least one marker is needed")
+        self.marker_sizes_m = {int(i): float(s) for i, s in marker_sizes_m.items()}
+        self.marker_ids = sorted(self.marker_sizes_m)
         self.horizontal_fov_deg = horizontal_fov_deg
         self.calibration_file = calibration_file
         self._camera_matrix: np.ndarray | None = None
@@ -120,6 +114,7 @@ class ArucoDetector:
             ],
             dtype=np.float32,
         )
+        self.other_ids_seen: set[int] = set()
         if calibration_file is not None:
             calibration = json.loads(calibration_file.read_text(encoding="utf-8"))
             self._camera_matrix = np.asarray(calibration["camera_matrix"], dtype=np.float64)
@@ -148,60 +143,48 @@ class ArucoDetector:
         )
         return camera_matrix, np.zeros(5, dtype=np.float64)
 
-    def detect(
-        self, image_rgb: np.ndarray, expected_camera_z_m: float | None = None
-    ) -> Detection | None:
+    def detect(self, image_rgb: np.ndarray) -> Detection | None:
         gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
         corners, ids, _rejected = self.detector.detectMarkers(gray)
         if ids is None:
             return None
-        matching = np.flatnonzero(ids.reshape(-1) == self.marker_id)
-        if matching.size == 0:
-            return None
+        flat_ids = [int(i) for i in ids.reshape(-1)]
+        # Remember every unknown ID seen so the status line can say "saw id 0"
+        # instead of a bare "not visible" when the print and config disagree.
+        self.other_ids_seen.update(i for i in flat_ids if i not in self.marker_sizes_m)
 
         height, width = image_rgb.shape[:2]
         camera_matrix, distortion = self.intrinsics(width, height)
 
-        # The eAruco landing target encodes the same ID at two physical
-        # scales. A corner set alone cannot say which scale produced it, so
-        # evaluate both pose hypotheses and compare them with vehicle height.
-        # Until a height is available the detection is returned with
-        # scale_resolved=False (pose from the embedded size) so it can be
-        # reported and drawn, but it is never sent: a target vector with a
-        # 9x scale error is worse than none.
-        scale_resolved = len(self.marker_sizes_m) == 1 or expected_camera_z_m is not None
-        sizes_to_try = self.marker_sizes_m if scale_resolved else self.marker_sizes_m[:1]
+        # Every marker on the pad has its own ID, so the ID alone fixes the
+        # physical size and there is no scale to guess. When more than one
+        # known marker is visible, use the one covering the most pixels: its
+        # corners are located most precisely, and as the vehicle descends the
+        # large marker leaves the frame and the small one takes over by itself.
+        best: tuple[float, Detection] | None = None
+        for index, marker_id in enumerate(flat_ids):
+            marker_size_m = self.marker_sizes_m.get(marker_id)
+            if marker_size_m is None:
+                continue
+            image_points = corners[index].reshape(4, 2).astype(np.float32)
+            pixel_area = float(cv2.contourArea(image_points))
+            if best is not None and pixel_area <= best[0]:
+                continue
+            success, _rotation, translation = cv2.solvePnP(
+                self.unit_object_points * marker_size_m,
+                image_points,
+                camera_matrix,
+                distortion,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE,
+            )
+            if not success:
+                continue
+            camera_xyz = translation.reshape(3).astype(np.float32)
+            if not np.all(np.isfinite(camera_xyz)) or camera_xyz[2] <= 0:
+                continue
+            best = (pixel_area, Detection(marker_id, marker_size_m, image_points, camera_xyz))
 
-        hypotheses: list[tuple[float, Detection]] = []
-        for match in matching:
-            image_points = corners[int(match)].reshape(4, 2).astype(np.float32)
-            for marker_size_m in sizes_to_try:
-                success, _rotation, translation = cv2.solvePnP(
-                    self.unit_object_points * marker_size_m,
-                    image_points,
-                    camera_matrix,
-                    distortion,
-                    flags=cv2.SOLVEPNP_IPPE_SQUARE,
-                )
-                if not success:
-                    continue
-                camera_xyz = translation.reshape(3).astype(np.float32)
-                if not np.all(np.isfinite(camera_xyz)) or camera_xyz[2] <= 0:
-                    continue
-                if expected_camera_z_m is None:
-                    score = 0.0
-                else:
-                    score = abs(math.log(float(camera_xyz[2]) / expected_camera_z_m))
-                hypotheses.append(
-                    (
-                        score,
-                        Detection(self.marker_id, marker_size_m, image_points, camera_xyz, scale_resolved),
-                    )
-                )
-
-        if not hypotheses:
-            return None
-        return min(hypotheses, key=lambda item: item[0])[1]
+        return None if best is None else best[1]
 
 
 class TcpFrameSource:
@@ -264,7 +247,6 @@ class MavlinkLandingTarget:
         self.target_system = 1
         self.target_component = 1
         self.last_heartbeat = 0.0
-        self.local_down_m: float | None = None
 
     def connect(self) -> None:
         if self.dry_run:
@@ -288,25 +270,11 @@ class MavlinkLandingTarget:
             flush=True,
         )
         self._check_parameters()
-        self.connection.mav.command_long_send(
-            self.target_system,
-            self.target_component,
-            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
-            0,
-            mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
-            50000,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
 
     def close(self) -> None:
         if self.connection is not None:
             self.connection.close()
             self.connection = None
-        self.local_down_m = None
 
     def _check_parameters(self) -> None:
         assert self.connection is not None
@@ -346,28 +314,15 @@ class MavlinkLandingTarget:
             if "PrecLand" in text or "Plnd" in text:
                 print(f"ArduPilot: {text}", flush=True)
 
-    def _consume_message(self, message) -> None:
-        self._print_status_text(message)
-        if (
-            message.get_type() == "LOCAL_POSITION_NED"
-            and message.get_srcSystem() == self.target_system
-        ):
-            self.local_down_m = float(message.z)
-
     def drain(self) -> None:
+        """Read whatever ArduPilot sent so its PrecLand status messages get printed."""
         if self.connection is None:
             return
         while True:
             message = self.connection.recv_match(blocking=False)
             if message is None:
                 return
-            self._consume_message(message)
-
-    def expected_camera_z_m(self, ground_down_m: float) -> float | None:
-        if self.local_down_m is None:
-            return None
-        height = ground_down_m - self.local_down_m
-        return height if height > 0.05 else None
+            self._print_status_text(message)
 
     def send(self, detection: Detection) -> None:
         if self.dry_run:
@@ -431,30 +386,52 @@ def load_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def build_detector(config: dict[str, Any], calibration_file: Path | None = None) -> ArucoDetector:
-    marker_size_m = float(config["marker_size_m"])
-    outer_marker_size_m = (
-        float(config["outer_marker_size_m"]) if "outer_marker_size_m" in config else None
-    )
-    marker_image_width_m = float(config.get("marker_image_width_m", marker_size_m))
-    if marker_size_m <= 0 or marker_image_width_m <= 0:
-        raise ValueError("marker_size_m and marker_image_width_m must be positive")
-    if outer_marker_size_m is not None and outer_marker_size_m <= marker_size_m:
-        raise ValueError("outer_marker_size_m must exceed marker_size_m")
-    largest_marker_size_m = outer_marker_size_m or marker_size_m
-    if largest_marker_size_m > marker_image_width_m:
-        raise ValueError("marker sizes cannot exceed marker_image_width_m")
+def parse_markers(config: dict[str, Any]) -> dict[int, float]:
+    """Return {marker_id: side_length_m} from the config's "markers" list.
 
-    if outer_marker_size_m is None:
-        scale_detail = f"{marker_size_m:.3f} m"
-    else:
-        scale_detail = f"{outer_marker_size_m:.3f} m outer / {marker_size_m:.3f} m embedded"
-    print(f"Marker: ArUco ID {int(config['marker_id'])}, {scale_detail}", flush=True)
+    Every marker on the landing pad has its own ID, so the ID seen in the
+    image fixes the physical size and no vehicle height is needed to tell a
+    large outer marker from a small inner one.
+    """
+    markers = config.get("markers")
+    if markers is None:
+        old_keys = [k for k in ("marker_id", "marker_size_m", "outer_marker_size_m") if k in config]
+        hint = f" (found old keys {', '.join(old_keys)})" if old_keys else ""
+        raise ValueError(
+            'config needs a "markers" list such as '
+            '[{"id": 9, "size_m": 2.2}, {"id": 10, "size_m": 0.3}]' + hint
+        )
+    if not isinstance(markers, list) or not markers:
+        raise ValueError('"markers" must be a non-empty list of {"id", "size_m"} entries')
+    sizes: dict[int, float] = {}
+    for entry in markers:
+        if not isinstance(entry, dict) or "id" not in entry or "size_m" not in entry:
+            raise ValueError(f'each marker needs "id" and "size_m", got {entry!r}')
+        marker_id = int(entry["id"])
+        size_m = float(entry["size_m"])
+        if marker_id < 0:
+            raise ValueError(f"marker id {marker_id} must not be negative")
+        if size_m <= 0:
+            raise ValueError(f"marker {marker_id}: size_m must be positive")
+        if marker_id in sizes:
+            raise ValueError(f"marker id {marker_id} is listed twice; each id has exactly one size")
+        sizes[marker_id] = size_m
+    return sizes
+
+
+def build_detector(config: dict[str, Any], calibration_file: Path | None = None) -> ArucoDetector:
+    marker_sizes_m = parse_markers(config)
+    largest_m = max(marker_sizes_m.values())
+    if "marker_image_width_m" in config:
+        marker_image_width_m = float(config["marker_image_width_m"])
+        if marker_image_width_m < largest_m:
+            raise ValueError("marker_image_width_m must be at least the largest marker size")
+
+    listing = ", ".join(f"ID {i} at {s:.3f} m" for i, s in sorted(marker_sizes_m.items()))
+    print(f"Markers: {config['marker_family']}, {listing}", flush=True)
     return ArucoDetector(
         config["marker_family"],
-        int(config["marker_id"]),
-        marker_size_m,
-        outer_marker_size_m,
+        marker_sizes_m,
         float(config["camera_hfov_deg"]),
         calibration_file,
     )
@@ -475,15 +452,13 @@ def run_bridge(
     stop_event: threading.Event,
     on_frame: FrameCallback | None = None,
 ) -> int:
-    """Detect on every frame, send resolved detections, retry on any disconnect.
+    """Detect on every frame, send every detection, retry on any disconnect.
 
     frame_source must provide frames(stop_event) yielding (frame_number, rgb_image).
     on_frame, if given, is called with every image and its detection (or None);
     the Pi uses it to publish frames to a laptop viewer.
     """
-    ground_down_m = float(config["ground_down_m"])
     detections = 0
-    unresolved = 0
     frames = 0
     last_report = time.monotonic()
     last_detection: Detection | None = None
@@ -497,14 +472,11 @@ def run_bridge(
 
             for _frame_number, image in frame_source.frames(stop_event):
                 frames += 1
-                detection = detector.detect(image, mavlink.expected_camera_z_m(ground_down_m))
+                detection = detector.detect(image)
                 if detection is not None:
                     last_detection = detection
-                    if detection.scale_resolved:
-                        detections += 1
-                        mavlink.send(detection)
-                    else:
-                        unresolved += 1
+                    detections += 1
+                    mavlink.send(detection)
                 if on_frame is not None:
                     on_frame(image, detection)
                 mavlink.drain()
@@ -512,23 +484,21 @@ def run_bridge(
                 now = time.monotonic()
                 if now - last_report >= 1.0:
                     if last_detection is None:
-                        detail = "target not visible"
+                        wanted = ", ".join(str(i) for i in detector.marker_ids)
+                        detail = f"marker ids {wanted} not visible"
+                        if detector.other_ids_seen:
+                            others = ", ".join(str(i) for i in sorted(detector.other_ids_seen))
+                            detail += f" (saw other marker ids: {others}; check the markers list in the config)"
                     else:
                         vector = last_detection.body_frd_m
                         detail = (
+                            f"id {last_detection.marker_id} ({last_detection.marker_size_m:.3f} m) "
                             f"body_frd=[{vector[0]:+.2f}, {vector[1]:+.2f}, {vector[2]:+.2f}] m "
-                            f"distance={last_detection.distance_m:.2f} m "
+                            f"distance={last_detection.distance_m:.2f} m"
                         )
-                        if last_detection.scale_resolved:
-                            detail += f"scale={last_detection.marker_size_m:.3f} m"
-                        else:
-                            detail += "scale unresolved (no vehicle height yet, not sent)"
-                    counts = f"{detections}/{frames} detections"
-                    if unresolved:
-                        counts += f" ({unresolved} unresolved)"
-                    print(f"Vision: {counts}; {detail}", flush=True)
+                    print(f"Vision: {detections}/{frames} detections; {detail}", flush=True)
+                    detector.other_ids_seen.clear()
                     detections = 0
-                    unresolved = 0
                     frames = 0
                     last_report = now
                     last_detection = None

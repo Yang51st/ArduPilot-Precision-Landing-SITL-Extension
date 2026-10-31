@@ -8,13 +8,14 @@ landingConfig = jsondecode(fileread(fullfile(configFolder, ...
 % Replace this with any square ArUco PNG/JPG. The image is reloaded each run.
 markerImageFile = fullfile(configFolder, landingConfig.marker_image);
 
-% The picture can contain an embedded ArUco whose physical size differs from
-% the full landing picture. MarkerSizeMeters controls the rendered picture;
-% marker_size_m is reserved for OpenCV's pose estimate of the inner ArUco.
+% The picture can hold several ArUco markers, each with its own ID; the
+% "markers" list in the JSON gives the physical size of each one for the
+% Python bridge. MarkerSizeMeters is the rendered width of the whole picture,
+% so it must be at least as large as the largest marker in that list.
 if isfield(landingConfig, 'marker_image_width_m')
     markerSizeMeters = landingConfig.marker_image_width_m;
 else
-    markerSizeMeters = landingConfig.marker_size_m;
+    markerSizeMeters = max([landingConfig.markers.size_m]);
 end
 
 % Marker pose in the same local NED frame reported by LOCAL_POSITION_NED.

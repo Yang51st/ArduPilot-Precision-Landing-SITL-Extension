@@ -71,7 +71,9 @@ These exist so a bad change on the Pi is always cheap to undo.
 
 What goes on the Pi is exactly four files, all in `~/precland`: `precland_core.py`, `pi_landing_bridge.py`, `pi_landing_config.json`, `setup_pi.sh`. Everything Simulink- or MATLAB-related stays on the laptop.
 
-## Process log and roadmap
+## Status, process log and roadmap
+
+`docs/status.md` is the snapshot: what works, what is in progress, what is uncommitted. Read it first in every new session and update it whenever the state changes, including the "Last updated" date.
 
 `docs/process-log.md` records what was actually done, in order, including things that failed and why. README.md is the how-to; the log is the history. Add to it during every session that touches the Pi or the Python bridge, as the work happens rather than at the end, so a session that stops early still leaves a record.
 

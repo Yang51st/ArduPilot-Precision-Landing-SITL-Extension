@@ -2,6 +2,13 @@
 
 This project adds a simulated downward-facing ArUco camera and a Python precision-landing bridge to an ArduPilot Copter SITL session started from Mission Planner. Simulink renders the camera image, and the Python bridge detects the marker and sends MAVLink `LANDING_TARGET` messages to SITL.
 
+## Documentation
+
+- `docs/status.md`: where the project stands right now. Start here in a new session.
+- `docs/next-steps.md`: the roadmap and the bench checks before any flight.
+- `docs/process-log.md`: what was done each session, including what failed.
+- `CLAUDE.md`: rules for working on the Raspberry Pi and for SSH access.
+
 ## Prerequisites
 
 - Python 3 and a virtual environment
@@ -50,7 +57,18 @@ When everything is connected, the Python terminal reports verified ArduPilot par
 
 ## Configuration
 
-Edit `aruco_landing_config.json` to change the marker, camera, ground position, or Python MAVLink/frame endpoints. Stop and restart the Python bridge and Simulink model after changing it.
+Edit `aruco_landing_config.json` to change the markers, camera, ground position, or Python MAVLink/frame endpoints. Stop and restart the Python bridge and Simulink model after changing it.
+
+The landing pad can carry several ArUco markers of different sizes, each with its own ID, so a large one is visible from altitude and a small one stays in frame near touchdown. List them under `markers`, one entry per ID with its side length in metres:
+
+```json
+"markers": [
+  {"id": 9, "size_m": 2.2},
+  {"id": 10, "size_m": 0.3}
+]
+```
+
+Because every ID has exactly one size, the bridge knows the physical size of any marker it sees and needs no vehicle height to work out the distance. When more than one listed marker is visible it uses the one covering the most pixels. Markers with IDs not in the list are ignored, but the status line names them so a print that does not match the config is easy to spot. The older `marker_id`, `marker_size_m` and `outer_marker_size_m` keys are no longer accepted.
 
 ## Raspberry Pi setup
 
@@ -151,7 +169,7 @@ No flight controller is involved yet, so the Pi bridge runs in dry-run mode: it 
    python scripts\view_frames.py --endpoint watarrow-pi:5600
    ```
 
-   A window opens with the live camera image and a frame rate counter. Hold a printed marker in front of the camera: a green outline and the estimated distance appear on the laptop, and the Pi terminal reports detections with `scale unresolved (no vehicle height yet, not sent)`. That text is correct for bench testing: the eAruco target carries the same ID at two sizes, and without a vehicle height the bridge refuses to guess which one it is seeing. Press `q` in the window to quit.
+   A window opens with the live camera image and a frame rate counter. Hold a printed marker in front of the camera: a green outline and the estimated distance appear on the laptop, and the Pi terminal reports a status line such as `Vision: 19/20 detections; id 9 (0.032 m) body_frd=[...] m distance=0.25 m`. The distance is only right if the `size_m` for that ID in `pi/pi_landing_config.json` matches the printed marker. Press `q` in the window to quit.
 
    If the stream stutters over the USB link, add `--publish-scale 0.5` on the Pi. If colours look swapped, see the comment in `Picamera2FrameSource` in `scripts/pi_landing_bridge.py`.
 
@@ -179,7 +197,7 @@ No flight controller is involved yet, so the Pi bridge runs in dry-run mode: it 
 
    On the next boot, allow two to three minutes before connecting. The Wi-Fi connection and the SSH key both persist.
 
-Two settings in `pi/pi_landing_config.json` are still the SITL values and must be updated for a real test: `marker_size_m` and `outer_marker_size_m` have to match the printed marker, and `camera_hfov_deg` is the nominal Pi Camera V2 value until a calibration file is made.
+Two things in `pi/pi_landing_config.json` must match the hardware for distances to mean anything: each `size_m` in the `markers` list has to be a ruler measurement of that printed marker's black border, and `camera_hfov_deg` is the nominal Pi Camera V2 value until a calibration file is made.
 
 ### Not yet done
 

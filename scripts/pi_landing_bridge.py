@@ -158,8 +158,6 @@ class FramePublisher:
             points = detection.corners.astype(np.int32).reshape(-1, 1, 2)
             cv2.polylines(frame, [points], True, (0, 255, 0), 2)
             label = f"id {detection.marker_id}  z={float(detection.camera_xyz_m[2]):.2f} m"
-            if not detection.scale_resolved:
-                label += "  (scale?)"
             origin = (int(points[0, 0, 0]), max(int(points[0, 0, 1]) - 8, 12))
             cv2.putText(frame, label, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
         if self.scale != 1.0:

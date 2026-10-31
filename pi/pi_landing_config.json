@@ -1,10 +1,8 @@
 {
-  "marker_family": "DICT_6X6_250",
-  "marker_id": 0,
-  "marker_size_m": 0.469,
-  "outer_marker_size_m": 4.0,
-  "marker_image_width_m": 4.492,
-  "ground_down_m": 0.0,
+  "marker_family": "DICT_4X4_250",
+  "markers": [
+    {"id": 9, "size_m": 0.032}
+  ],
   "camera_hfov_deg": 62.2,
   "camera_width": 640,
   "camera_height": 480,

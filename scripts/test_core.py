@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Laptop regression test for precland_core.py. No MATLAB, no network, no Pi.
 
-Renders the configured ArUco marker into a synthetic camera frame at a known
-pixel size, runs the detector, and checks the recovered pose and the
-two-scale resolution logic. Also round-trips the frame stream header.
+Renders the configured ArUco markers into synthetic camera frames at known
+pixel sizes, runs the detector, and checks the recovered pose, the physical
+size looked up from each marker's ID, and the choice made when two markers
+are visible at once. Also round-trips the frame stream header.
 
 Run from the repository root with the laptop venv active:
 
@@ -27,21 +28,28 @@ from precland_core import (  # noqa: E402
     build_detector,
     load_config,
     pack_frame_header,
+    parse_markers,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
-MARKER_PIXELS = 120
+LARGE_PIXELS = 120
+SMALL_PIXELS = 60
 
 
-def synthetic_frame(config: dict) -> np.ndarray:
-    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, config["marker_family"]))
-    marker = cv2.aruco.generateImageMarker(dictionary, int(config["marker_id"]), MARKER_PIXELS)
-    frame = np.full((FRAME_HEIGHT, FRAME_WIDTH), 255, dtype=np.uint8)
-    top = (FRAME_HEIGHT - MARKER_PIXELS) // 2
-    left = (FRAME_WIDTH - MARKER_PIXELS) // 2
-    frame[top : top + MARKER_PIXELS, left : left + MARKER_PIXELS] = marker
+def blank_frame() -> np.ndarray:
+    return np.full((FRAME_HEIGHT, FRAME_WIDTH), 255, dtype=np.uint8)
+
+
+def paste_marker(frame: np.ndarray, dictionary, marker_id: int, pixels: int, centre_x: int, centre_y: int) -> None:
+    marker = cv2.aruco.generateImageMarker(dictionary, marker_id, pixels)
+    top = centre_y - pixels // 2
+    left = centre_x - pixels // 2
+    frame[top : top + pixels, left : left + pixels] = marker
+
+
+def to_rgb(frame: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
 
 
@@ -54,45 +62,59 @@ def check(condition: bool, message: str) -> None:
 
 def main() -> int:
     config = load_config(REPO_ROOT / "aruco_landing_config.json")
+    sizes = parse_markers(config)
+    check(len(sizes) >= 2, f"config lists at least two markers (found {len(sizes)})")
+    first_id, second_id = sorted(sizes)[:2]
     detector = build_detector(config)
-    frame = synthetic_frame(config)
+    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, config["marker_family"]))
 
     focal_px = (FRAME_WIDTH / 2.0) / math.tan(math.radians(float(config["camera_hfov_deg"])) / 2.0)
-    embedded_m = float(config["marker_size_m"])
-    outer_m = float(config["outer_marker_size_m"])
-    expected_z_embedded = focal_px * embedded_m / MARKER_PIXELS
-    expected_z_outer = focal_px * outer_m / MARKER_PIXELS
+    centre = (FRAME_WIDTH // 2, FRAME_HEIGHT // 2)
+    left = (FRAME_WIDTH // 4, FRAME_HEIGHT // 2)
+    right = (3 * FRAME_WIDTH // 4, FRAME_HEIGHT // 2)
 
-    print("Detection without vehicle height:")
-    detection = detector.detect(frame, None)
-    check(detection is not None, "marker detected")
-    assert detection is not None
-    check(not detection.scale_resolved, "scale is reported as unresolved")
-    check(detection.marker_size_m == embedded_m, "unresolved pose uses the embedded marker size")
-    z = float(detection.camera_xyz_m[2])
-    check(
-        math.isclose(z, expected_z_embedded, rel_tol=0.05),
-        f"camera z {z:.3f} m within 5% of {expected_z_embedded:.3f} m",
-    )
-    lateral = float(np.hypot(detection.camera_xyz_m[0], detection.camera_xyz_m[1]))
-    check(lateral < 0.02, f"marker centred: lateral offset {lateral * 100:.1f} cm")
+    detection = None
+    for marker_id in (first_id, second_id):
+        print(f"Marker ID {marker_id} alone, centred, {LARGE_PIXELS} px wide:")
+        frame = blank_frame()
+        paste_marker(frame, dictionary, marker_id, LARGE_PIXELS, *centre)
+        detection = detector.detect(to_rgb(frame))
+        check(detection is not None, "marker detected")
+        assert detection is not None
+        check(detection.marker_id == marker_id, f"reported as id {marker_id}")
+        check(
+            detection.marker_size_m == sizes[marker_id],
+            f"size taken from the config for that id: {sizes[marker_id]:.3f} m",
+        )
+        expected_z = focal_px * sizes[marker_id] / LARGE_PIXELS
+        z = float(detection.camera_xyz_m[2])
+        check(math.isclose(z, expected_z, rel_tol=0.05), f"camera z {z:.3f} m within 5% of {expected_z:.3f} m")
+        lateral = float(np.hypot(detection.camera_xyz_m[0], detection.camera_xyz_m[1]))
+        check(lateral < 0.01 * z, f"marker centred: lateral offset {lateral * 100:.1f} cm")
 
-    print("Detection with vehicle height near the embedded-scale estimate:")
-    detection = detector.detect(frame, expected_z_embedded)
-    check(detection is not None and detection.scale_resolved, "scale resolved")
+    print("Two known markers visible: the one covering more pixels is used:")
+    frame = blank_frame()
+    paste_marker(frame, dictionary, first_id, LARGE_PIXELS, *left)
+    paste_marker(frame, dictionary, second_id, SMALL_PIXELS, *right)
+    detection = detector.detect(to_rgb(frame))
+    check(detection is not None and detection.marker_id == first_id, f"id {first_id} chosen when it is larger in the image")
+    frame = blank_frame()
+    paste_marker(frame, dictionary, first_id, SMALL_PIXELS, *left)
+    paste_marker(frame, dictionary, second_id, LARGE_PIXELS, *right)
+    detection = detector.detect(to_rgb(frame))
+    check(detection is not None and detection.marker_id == second_id, f"id {second_id} chosen when it is larger in the image")
     assert detection is not None
-    check(detection.marker_size_m == embedded_m, "embedded scale chosen")
+    check(detection.marker_size_m == sizes[second_id], "and its own size is used for the pose")
+    check(float(detection.camera_xyz_m[0]) > 0, "marker on the right of the image gives positive camera x")
 
-    print("Detection with vehicle height near the outer-scale estimate:")
-    detection = detector.detect(frame, expected_z_outer)
-    check(detection is not None and detection.scale_resolved, "scale resolved")
-    assert detection is not None
-    check(detection.marker_size_m == outer_m, "outer scale chosen")
-    z = float(detection.camera_xyz_m[2])
-    check(
-        math.isclose(z, expected_z_outer, rel_tol=0.05),
-        f"camera z {z:.3f} m within 5% of {expected_z_outer:.3f} m",
-    )
+    print("Marker with an ID that is not in the config:")
+    dictionary_size = int(dictionary.bytesList.shape[0])
+    unknown_id = next(i for i in range(dictionary_size) if i not in sizes)
+    frame = blank_frame()
+    paste_marker(frame, dictionary, unknown_id, LARGE_PIXELS, *centre)
+    detector.other_ids_seen.clear()
+    check(detector.detect(to_rgb(frame)) is None, f"id {unknown_id} is ignored")
+    check(unknown_id in detector.other_ids_seen, "but remembered for the status line")
 
     print("Body frame conversion:")
     body = detection.body_frd_m
