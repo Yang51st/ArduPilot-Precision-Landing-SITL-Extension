@@ -39,21 +39,20 @@ The Pi config uses the nominal 62.2 degree field of view of the Pi Camera V2, an
 
 Right now the Pi detects the marker but has nobody to tell. The link is a serial cable: three wires from the Pi's GPIO header to a telemetry port on the flight controller. Pi TX to controller RX, Pi RX to controller TX, ground to ground. Do not connect 5 V unless the decision has been made that the controller powers the Pi.
 
-Pi side, three one-time settings, best done by a small script run once with Josef's approval (it edits `config.txt`, which is a system change under the rules):
+**Done 2026-10-31 by Josef** (recorded in `docs/pi-setup-record.md`): UART enabled and the login console removed with `raspi-config`; TELEM2 on the Pixhawk 6C set to MAVLink 2 at 921600; MAVProxy installed in the bridge venv and a six-minute session logged with the ArduPlane 4.7.1 banner. Bluetooth was left on, so the pins carry the mini UART; `enable_uart=1` fixes the core clock at 400 MHz, which keeps the baud stable, and the test showed no trouble. `dtoverlay=disable-bt` stays as the fallback if the link ever drops under load.
 
-- Enable the UART. By default the header pins carry no serial port.
-- Take the Linux login console off that port, or it will send boot text into the flight controller.
-- Disable Bluetooth. The Zero 2W has one proper UART and one mini UART. Bluetooth takes the proper one by default, and the mini UART changes speed with the CPU clock, which corrupts MAVLink. Disabling Bluetooth gives the proper UART to the pins.
+Still open on this item:
 
-Flight controller side, two parameters on the chosen telemetry port: protocol MAVLink 2, baud matching the Pi (57600 is the safe default). Add them to `precision-landing.parm`.
-
-Software side: the core already speaks MAVLink. It needs two config keys, `mavlink_endpoint` as a serial device path and `mavlink_baud`, passed through to pymavlink. This was deferred on 2026-10-29 and goes back into `precland_core.py` when the hardware arrives.
+- Software side: the core needs two config keys, `mavlink_endpoint` as `/dev/serial0` and `mavlink_baud` 921600, passed through to pymavlink. Then the Pi config stops saying `not-configured-until-flight-controller-is-wired`.
+- Only one program can hold `/dev/serial0`. Stop MAVProxy before the bridge runs without `--dry-run`.
+- The flight controller is ArduPlane (QuadPlane), not Copter. Check that the `REQUIRED_PARAMETERS` list and the `LANDING_TARGET` handling match Plane's precision-landing path before relying on SITL results.
+- Decide about the OpenCV 5.0 pip wheel that MAVProxy pulled into the venv (details in the record).
 
 Pass condition: start the bridge without `--dry-run`; it prints "connected to system 1" and then "parameters verified", the same two lines seen in SITL.
 
 ### 4. Parameter check for real hardware
 
-The bridge refuses to run unless the vehicle's precision-landing settings are right. One of the checks is `SERIAL2_PROTOCOL`, the SITL port, which will be wrong on a real controller using a different port. Move the required-parameter list into the config file so the SITL config checks SITL's port and the Pi config checks the real one. About ten lines in `precland_core.py`.
+The bridge refuses to run unless the vehicle's precision-landing settings are right. On the real Pixhawk `PLND_ENABLED` is currently 0 and the other `PLND_` values are defaults, so the first run will stop at this check until they are set in Mission Planner. One of the checks is `SERIAL2_PROTOCOL`, which happens to match since the Pi is on TELEM2, but a different port would break it. Move the required-parameter list into the config file so the SITL config checks SITL's port and the Pi config checks the real one. About ten lines in `precland_core.py`.
 
 ### 5. Bench test with the controller connected
 

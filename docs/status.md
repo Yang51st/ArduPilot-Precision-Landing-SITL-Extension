@@ -13,6 +13,7 @@ Start here in a new session. This page is the snapshot; the other documents hold
 | [`CLAUDE.md`](../CLAUDE.md) | Rules for working on the Pi and for Claude's SSH access. Read before touching the Pi |
 | [`docs/next-steps.md`](next-steps.md) | The roadmap: remaining work in order and the bench checks to pass before flying |
 | [`docs/process-log.md`](process-log.md) | The history: what was done each session, what failed and why |
+| [`docs/pi-setup-record.md`](pi-setup-record.md) | Exactly what is on the Pi and on the flight controller, and the checklist to rebuild it from a blank SD card |
 
 ## What works today
 
@@ -21,8 +22,9 @@ Start here in a new session. This page is the snapshot; the other documents hold
 | SITL pipeline on the laptop (Mission Planner, Simulink camera, Python bridge) | Working as of the 2026-10-29 refactor | Full SITL run per README "Run the simulation" is Josef's regression check; `scripts/test_core.py` covers the shared core |
 | Shared core `scripts/precland_core.py` | Working. Config now lists markers as `"markers": [{"id", "size_m"}, ...]`, one size per ID, no vehicle height needed | `python scripts\test_core.py` passes, last run 2026-10-31 with the 4x4 family, IDs 9 and 10 |
 | Pi Zero 2W over USB gadget SSH, key-based login | Working | `hostname && uptime` check, 2026-10-31 |
-| Pi venv with OpenCV 4.10 (aruco), Picamera2, pymavlink | Installed | `./setup_pi.sh check` on the Pi, 2026-10-31 |
-| Pi camera stream to the laptop viewer | Working, about 20 fps at 640x480 | Bench test 2026-10-29, process log |
+| Pi venv with OpenCV, Picamera2, pymavlink, MAVProxy | Installed. OpenCV is now the pip 5.0 wheel that MAVProxy pulled in, not the apt 4.10 build; aruco smoke test passes | `./setup_pi.sh check` on the Pi, 2026-10-31 evening |
+| Pi UART to the flight controller | **Working.** `enable_uart=1`, serial console off, `/dev/serial0` is the mini UART at 921600 baud. MAVProxy received 35,973 messages from a Pixhawk 6C running ArduPlane 4.7.1 over six minutes | `~/precland/MyCopter/logs/2026-10-31/flight1/` on the Pi; details in `docs/pi-setup-record.md` |
+| Pi camera stream to the laptop viewer | Worked at about 20 fps at 640x480 on 2026-10-29. Camera currently unplugged (removed on purpose during the flight controller wiring), reconnect before the next bench test | Bench test 2026-10-29, process log |
 | Pi bridge in dry-run | Running on demand, nothing sent | Process log |
 | Deploy script `pi\deploy_to_pi.ps1` | Working | Used three times on 2026-10-31 |
 
@@ -30,6 +32,9 @@ Start here in a new session. This page is the snapshot; the other documents hold
 
 | Item | State |
 | --- | --- |
+| Camera reconnect | The Pi camera was unplugged on purpose during the flight controller wiring on 2026-10-31. Plug it back in with the Pi off, then `./setup_pi.sh check` should list the imx219 again |
+| Flight controller precision-landing parameters | `PLND_ENABLED` is 0 on the Pixhawk. The bridge's parameter check needs the six values in `docs/pi-setup-record.md` 2d. Firmware is ArduPlane (QuadPlane), SITL work was Copter |
+| Bridge serial endpoint | The core still has no serial endpoint or baud for the real link; `pi_landing_config.json` says `not-configured-until-flight-controller-is-wired`. Next code step is `mavlink_endpoint: /dev/serial0` plus `mavlink_baud: 921600` |
 | Printed marker matches the config | Family changed to `DICT_4X4_250` and ID to 9 in both configs and deployed to the Pi on 2026-10-31. **Detection of the printed marker with these settings is not yet confirmed in the log.** If the Pi says "target id 9 not visible (saw other marker ids: ...)" the print and the config still disagree |
 | Marker sizes | `pi/pi_landing_config.json` lists ID 9 at 0.032 m, the size Josef gave for the print on 2026-10-31. Confirm with a ruler. The earlier 1.4 m reading was the 0.469 m SITL size applied to a 3.2 cm print |
 | Competition pad | `aruco_landing_config.json` lists ID 9 at 2.2 m and ID 10 at 0.3 m as a first guess for the 2.44 m SAE pad. The SAE 2027 rules say nothing about ArUco; the pad must be passive coroplast with no electronics. Nested placement inside a 4x4 marker still needs a design check |
@@ -39,9 +44,9 @@ Start here in a new session. This page is the snapshot; the other documents hold
 
 As of 2026-10-31 these are modified and not committed: both config files (new `markers` list), `scripts/precland_core.py` and `scripts/test_core.py` (one size per marker ID, height-based scale logic removed), `scripts/pi_landing_bridge.py`, `aruco_camera_config.m`, `README.md`, `docs/`. Untracked and awaiting a decision: `cache/`, `create_local_json.py`, `os_list_local.rpi-imager-manifest` (rpi-imager helper files). Last commit is `fb86663`.
 
-## Deferred until a flight controller is wired
+## Deferred
 
-UART enable on the Pi, serial MAVLink endpoint and baud, autostart on boot, the real-hardware parameter check, and everything in `docs/next-steps.md` from item 3 onward. The Pi bridge always runs with `--dry-run` until then.
+The flight controller is now wired and the Pi UART is enabled (done by Josef on 2026-10-31). Still deferred: the serial MAVLink endpoint and baud in the bridge config and code, autostart on boot, the real-hardware parameter check, and `docs/next-steps.md` from item 3 onward. The Pi bridge still runs with `--dry-run` until the endpoint work is done and `PLND_` is set on the controller.
 
 ## Fastest way to pick up where this left off
 

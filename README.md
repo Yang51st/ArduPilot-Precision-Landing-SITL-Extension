@@ -201,4 +201,4 @@ Two things in `pi/pi_landing_config.json` must match the hardware for distances 
 
 ### Not yet done
 
-Wiring the Pi to a flight controller (UART enable, serial MAVLink endpoint, autostart on boot, the real-hardware parameter check) is deferred until the drone is built. Until then the Pi bridge always runs with `--dry-run`. The plan for that work, and the bench checks to pass before any flight, are in `docs/next-steps.md`. What has been done so far, including what went wrong, is in `docs/process-log.md`.
+The Pi is wired to a Pixhawk 6C over TELEM2 and the UART is enabled; MAVProxy proved the link on 2026-10-31 (`docs/pi-setup-record.md` has the exact board state and a rebuild checklist). The bridge itself still needs a serial MAVLink endpoint in its config, the controller needs its `PLND_` parameters, and autostart on boot is not done. Until then the Pi bridge always runs with `--dry-run`. The plan for that work, and the bench checks to pass before any flight, are in `docs/next-steps.md`. What has been done so far, including what went wrong, is in `docs/process-log.md`.

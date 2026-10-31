@@ -210,3 +210,36 @@ The bridge running on the Pi (pid 3614, in Josef's SSH terminal) still has the o
 - Nested placement for the competition pad: a 2.2 m 4x4 marker has 0.367 m cells, and a 0.3 m marker inside a white cell leaves too little quiet zone and flips that cell black for the outer decoder. Needs a smaller inner marker, a different placement, or a test of the dictionary's error correction.
 - Regenerate the SITL marker picture for IDs 9 and 10 and set `marker_image_width_m` to its width.
 - Measure the 3.2 cm print with a ruler to confirm `size_m`.
+
+## 2026-10-31 evening: flight controller wired, MAVLink proven, Pi audited
+
+### What Josef did (reconstructed from the Pi, not watched)
+
+Following https://ardupilot.org/dev/docs/raspberry-pi-via-mavlink.html:
+
+1. `sudo raspi-config`, Serial Port: login shell No, hardware Yes, reboot. Result: `enable_uart=1` in `/boot/firmware/config.txt`, `console=serial0,115200` removed from `cmdline.txt`, `/dev/serial0` pointing at `ttyS0` (mini UART, Bluetooth untouched, core clock fixed at 400 MHz).
+2. Wired the Pixhawk 6C TELEM2 to the Pi header. Pins and power source not yet confirmed in writing.
+3. `.venv/bin/pip install MAVProxy` from `~/precland` at 18:34 Pi time. MAVProxy 1.8.75 brought `opencv-python 5.0.0.93`, matplotlib, vtk and friends into the bridge venv. `pandas-stubs` was installed by name at 18:42 to fix an issue the install hit with the system's `types-seaborn` stub package (Josef's note).
+4. `mavproxy.py --master=/dev/serial0 --baudrate 921600 --aircraft MyCopter` from `~/precland`, 18:46:49 to 18:52:41. MAVProxy's log shows 35,973 messages from system 1: `ArduPlane V4.7.1 (dbe79216)`, `Pixhawk6C-bdshot`, ELRS receiver on CRSF, `PreArm: Waiting for RC` throughout. Mission Planner 1.3.83 was connected at the same time, presumably over USB. Controller has `SERIAL2_PROTOCOL 2`, `SERIAL2_BAUD 921`, `PLND_ENABLED 0`.
+
+### Audit (Claude, read-only over SSH)
+
+Read `config.txt`, `cmdline.txt`, device-tree aliases, `vcgencmd`, systemd unit states, group membership, venv package list with install times and `REQUESTED` markers, `pip show` dependency chains, MAVProxy's `mav.parm`, `defaults.parm` and `flight.tlog` (parsed with pymavlink on the Pi), and ran `setup_pi.sh check` plus an ArUco smoke test with the venv's OpenCV. Nothing on the Pi was changed. Written up as `docs/pi-setup-record.md` with a rebuild checklist.
+
+Findings:
+
+- **Camera absent.** `rpicam-hello --list-cameras`: "No cameras available"; `vcgencmd get_camera`: `detected=0`; Picamera2 lists nothing. The same check listed the imx219 at 00:11 Pi time. Josef later confirmed the camera was unplugged on purpose during the flight controller wiring, so this is expected and not a fault.
+- **OpenCV swapped under the bridge.** The venv now imports the pip 5.0.0 wheel instead of apt 4.10. `aruco` works (ID 9 detected, pose solved, 0.085 m for a 200 px marker at the assumed 0.032 m size). Frame rate not re-measured.
+- **Clock caveat.** Without an RTC, files written before NTP syncs carry the fake-hwclock time (2026-10-30 00:30). Boot-file dates are meaningless; the journal is volatile so the reboot count is not visible either.
+- The shell history on disk ends at `sudo raspi-config` because the current SSH session has not logged out yet; the later commands were inferred from package metadata and MAVProxy's own files.
+
+Docs updated: `status.md` (UART row, camera row, three new in-progress rows, deferred section), `next-steps.md` item 3 and item 4, `CLAUDE.md` rules 7 and 8, README "Not yet done".
+
+### Open
+
+- Josef to confirm: header pins used, whether the Pi draws 5 V from TELEM2.
+- Reconnect the camera (Pi off), rerun `./setup_pi.sh check`.
+- `docs/pi-fc-link.html`, a planning diagram drawn before the wiring, was deleted at Josef's request on 2026-10-31.
+- Decide on the OpenCV wheel (keep, uninstall, or move MAVProxy to its own venv).
+- Add `mavlink_endpoint` `/dev/serial0` and `mavlink_baud` 921600 to the core and Pi config.
+- Set the `PLND_` parameters on the Pixhawk and check Plane's precision-landing behaviour against the Copter-tested bridge.
