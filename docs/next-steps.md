@@ -37,7 +37,7 @@ The Pi config uses the nominal 62.2 degree field of view of the Pi Camera V2, an
 
 ### 3. Flight controller link
 
-Right now the Pi detects the marker but has nobody to tell. The link is a serial cable: three wires from the Pi's GPIO header to a telemetry port on the flight controller. Pi TX to controller RX, Pi RX to controller TX, ground to ground. Do not connect 5 V unless the decision has been made that the controller powers the Pi.
+Right now the Pi detects the marker but has nobody to tell. The link is a serial cable: three wires from the Pi's GPIO header to a telemetry port on the flight controller. Pi TX to controller RX, Pi RX to controller TX, ground to ground. Done 2026-10-31 with exactly those three wires and no 5 V. The Pi is still on USB power from the laptop, so a power source for the Pi on the airframe is an open decision.
 
 **Done 2026-10-31 by Josef** (recorded in `docs/pi-setup-record.md`): UART enabled and the login console removed with `raspi-config`; TELEM2 on the Pixhawk 6C set to MAVLink 2 at 921600; MAVProxy installed in the bridge venv and a six-minute session logged with the ArduPlane 4.7.1 banner. Bluetooth was left on, so the pins carry the mini UART; `enable_uart=1` fixes the core clock at 400 MHz, which keeps the baud stable, and the test showed no trouble. `dtoverlay=disable-bt` stays as the fallback if the link ever drops under load.
 

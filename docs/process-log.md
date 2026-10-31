@@ -218,7 +218,7 @@ The bridge running on the Pi (pid 3614, in Josef's SSH terminal) still has the o
 Following https://ardupilot.org/dev/docs/raspberry-pi-via-mavlink.html:
 
 1. `sudo raspi-config`, Serial Port: login shell No, hardware Yes, reboot. Result: `enable_uart=1` in `/boot/firmware/config.txt`, `console=serial0,115200` removed from `cmdline.txt`, `/dev/serial0` pointing at `ttyS0` (mini UART, Bluetooth untouched, core clock fixed at 400 MHz).
-2. Wired the Pixhawk 6C TELEM2 to the Pi header. Pins and power source not yet confirmed in writing.
+2. Wired the Pixhawk 6C TELEM2 to the Pi header with three wires: TX, RX, GND. No 5 V from the controller; the Pi stays on USB power (Josef's note, added after the audit).
 3. `.venv/bin/pip install MAVProxy` from `~/precland` at 18:34 Pi time. MAVProxy 1.8.75 brought `opencv-python 5.0.0.93`, matplotlib, vtk and friends into the bridge venv. `pandas-stubs` was installed by name at 18:42 to fix an issue the install hit with the system's `types-seaborn` stub package (Josef's note).
 4. `mavproxy.py --master=/dev/serial0 --baudrate 921600 --aircraft MyCopter` from `~/precland`, 18:46:49 to 18:52:41. MAVProxy's log shows 35,973 messages from system 1: `ArduPlane V4.7.1 (dbe79216)`, `Pixhawk6C-bdshot`, ELRS receiver on CRSF, `PreArm: Waiting for RC` throughout. Mission Planner 1.3.83 was connected at the same time, presumably over USB. Controller has `SERIAL2_PROTOCOL 2`, `SERIAL2_BAUD 921`, `PLND_ENABLED 0`.
 
@@ -237,7 +237,6 @@ Docs updated: `status.md` (UART row, camera row, three new in-progress rows, def
 
 ### Open
 
-- Josef to confirm: header pins used, whether the Pi draws 5 V from TELEM2.
 - Reconnect the camera (Pi off), rerun `./setup_pi.sh check`.
 - `docs/pi-fc-link.html`, a planning diagram drawn before the wiring, was deleted at Josef's request on 2026-10-31.
 - Decide on the OpenCV wheel (keep, uninstall, or move MAVProxy to its own venv).

@@ -1,6 +1,6 @@
 # Raspberry Pi: current state and how to rebuild it
 
-Written 2026-10-31 from a read-only audit of the board over SSH, after Josef wired the Pi to the flight controller and proved the MAVLink link with MAVProxy following https://ardupilot.org/dev/docs/raspberry-pi-via-mavlink.html. Everything below was read from the Pi itself (boot files, device tree, installed packages, MAVProxy's saved logs), not assumed. Items marked **confirm** could not be read from the board and need Josef's word.
+Written 2026-10-31 from a read-only audit of the board over SSH, after Josef wired the Pi to the flight controller and proved the MAVLink link with MAVProxy following https://ardupilot.org/dev/docs/raspberry-pi-via-mavlink.html. Everything below was read from the Pi itself (boot files, device tree, installed packages, MAVProxy's saved logs), not assumed. The wiring and power facts came from Josef, since they cannot be read over SSH.
 
 Purpose: if the SD card dies or the board is swapped, follow the rebuild checklist at the end and the Pi comes back to exactly this state.
 
@@ -14,8 +14,8 @@ Related: [`status.md`](status.md) is the snapshot, [`next-steps.md`](next-steps.
 | Camera | Raspberry Pi Camera V2 (imx219) on the CSI ribbon. Unplugged on purpose while the flight controller was wired (Josef, 2026-10-31); not detected during the audit for that reason. Reconnect with the Pi powered off |
 | Flight controller | Holybro Pixhawk 6C (`Pixhawk6C-bdshot` firmware target), ArduPlane V4.7.1 (git dbe79216), ChibiOS d103983f, IOMCU present |
 | Airframe as configured on the controller | QuadPlane (`Q_ENABLE 1`, `Q_FRAME_CLASS 7`, tricopter VTOL motors), ELRS receiver on CRSF (`SERIAL1_PROTOCOL 23`), VL53L0X I2C rangefinder (`RNGFND1_TYPE 16`, address 41) |
-| Pi to controller link | Pi UART on the 40-pin header to the controller's SERIAL2, which is the TELEM2 port on a Pixhawk 6C. **Confirm** which pins: the standard is Pi pin 8 (GPIO14, TXD) to TELEM2 RX, Pi pin 10 (GPIO15, RXD) to TELEM2 TX, Pi pin 6 (GND) to TELEM2 GND |
-| Pi power | **Confirm.** The ArduPilot page advises against taking 5 V from the TELEM connector. Until now the Pi has been powered from the laptop's USB cable |
+| Pi to controller link | Three wires from the Pixhawk 6C TELEM2 port (SERIAL2) to the Pi's 40-pin header: TX, RX and GND, no 5 V (Josef, 2026-10-31). TX and RX are necessarily GPIO14 (pin 8) and GPIO15 (pin 10), the only pins `enable_uart=1` routes `serial0` to, crossed so Pi TX meets TELEM2 RX. Ground is on one of the header's GND pins, which one does not matter |
+| Pi power | Not from the flight controller: only three wires come from TELEM2, so the 5 V line is not connected, as the ArduPilot page advises. The Pi is powered over its USB cable from the laptop. A flight power source for the Pi is still to be chosen |
 | Laptop link | USB gadget Ethernet, hostname `watarrow-pi`, user `watarrow`, SSH key login (see CLAUDE.md) |
 
 ## Operating system and network
