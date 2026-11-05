@@ -242,3 +242,68 @@ Docs updated: `status.md` (UART row, camera row, three new in-progress rows, def
 - Decide on the OpenCV wheel (keep, uninstall, or move MAVProxy to its own venv).
 - Add `mavlink_endpoint` `/dev/serial0` and `mavlink_baud` 921600 to the core and Pi config.
 - Set the `PLND_` parameters on the Pixhawk and check Plane's precision-landing behaviour against the Copter-tested bridge.
+
+## 2026-11-04: serial endpoint and baud for the real link
+
+### What Josef did
+
+- Edited `pi/pi_landing_config.json`: `mavlink_endpoint` from the placeholder to `/dev/serial0`, and a new key `mavlink_baud` 921600.
+- Changed one parameter on the Pixhawk (his report; which one is not recorded and Claude has not read it back).
+
+### What Claude found
+
+The config edit alone did nothing for the baud. `build_mavlink` passed only the endpoint to pymavlink, so `mavlink_baud` was ignored and the port would have opened at pymavlink's default of 115200. Against a controller at 921600 that ends in "no ArduPilot heartbeat on companion link" after five seconds, which looks like a wiring fault but is not.
+
+Also cleared up on the way: `SERIAL2_BAUD 921` on the Pixhawk is ArduPilot shorthand. pymavlink takes the real rate, so the Pi side is 921600.
+
+### What Claude changed (laptop only, nothing deployed)
+
+- `scripts/precland_core.py`: `MavlinkLandingTarget` takes an optional `baud` and passes it to `mavutil.mavlink_connection`; `build_mavlink` reads `mavlink_baud` from the config and rejects values under 1200 with a message naming the full rate. The SITL config has no such key and behaves as before. The parameter error now says "ArduPilot" instead of "SITL".
+- `scripts/pi_landing_bridge.py`: removed the warning that said no flight controller link exists, and updated the docstring and `--mavlink` help to match.
+- `scripts/test_core.py`: three new checks (SITL config leaves the default, Pi config gives `/dev/serial0` at 921600, 921 is rejected).
+- `python scripts\test_core.py`: all checks pass.
+
+### Deploy (20:20 Pi time)
+
+Josef first typed `.\pi\deploy_to_pi.ps1` into the Pi's SSH shell, which fails with "command not found": the script is a laptop PowerShell script that pushes to the Pi. Claude ran it from the laptop instead.
+
+- Before: `test_core.py` passed; `hostname && uptime` gave `watarrow-pi`, up 32 min; `pgrep` found no bridge and no MAVProxy running.
+- `pi\deploy_to_pi.ps1`: "Deploy complete."
+- `./setup_pi.sh check`: python 3.13.5, numpy 2.2.4, opencv 5.0.0 with aruco, pymavlink 2.4.50, picamera2 importable. **The camera is back**: Picamera2 and `rpicam-hello` both list the imx219. 271 MB memory available, disk 9% used.
+- A first `pgrep` attempt with a quoted `a|b` pattern was mangled by PowerShell (the quotes were stripped and the `|` became a pipe on the Pi). Use one `pgrep -af [p]attern` per process instead.
+
+### First run without `--dry-run` (20:31 Pi time, started by Josef)
+
+Josef started `pi_landing_bridge.py --config pi_landing_config.json --publish 0.0.0.0:5600` in his SSH terminal, then reported no `LANDING_TARGET` in Mission Planner's MAVLink inspector. Claude checked from the laptop, read-only:
+
+- `ps`: the bridge (pid 2898) is running without `--dry-run`. `fuser /dev/ttyS0` names that pid and `stty -F /dev/ttyS0 speed` gives 921600, so the new baud code is in effect.
+- A probe script read ten frames from port 5600. Frames only reach the publisher from inside the frame loop, which the core enters only after the heartbeat arrives and the parameter check passes. **So the link is up and the six parameters are verified, by inference from the code path.** The terminal lines "connected to system 1" and "parameters verified" are in Josef's window and were not seen by Claude.
+- The detector, run on the laptop over those ten frames with the Pi config, found no marker and no other marker IDs. The saved frame shows a person and a room, no printed marker. With no detection the bridge sends nothing at all, not even its heartbeat (the heartbeat is sent from inside `send`), which is why the inspector shows no Vehicle 42.
+- The probe makes the Pi terminal print one "viewer connected" and one "viewer disconnected" line.
+
+### Detections on the Pi, nothing in the inspector (19:54 laptop time)
+
+Josef held the marker in view: the Pi terminal showed detections, the MAVLink inspector still showed no `LANDING_TARGET`. Claude read Mission Planner's telemetry logs in `Documents\Mission Planner\logs` with pymavlink (on copies, read-only):
+
+- `2026-11-04 19-01-03.tlog` (19:01:05 to 19:08:20, before the bridge ran): only system 1 and Mission Planner (255). It records the controller's parameters: `PLND_ENABLED 1`, `PLND_TYPE 1`, `PLND_EST_TYPE 0`, `PLND_ALT_MIN 0`, `PLND_ALT_MAX 0`, `SERIAL2_PROTOCOL 2`, `SERIAL2_BAUD 921`. So all six required values were set by 19:08. `SERIAL2_OPTIONS`, `MAV_OPTIONS` and `MAV1/2/3_OPTIONS` are all 0, so MAVLink forwarding is not switched off on any port.
+- `2026-11-04 19-08-38.tlog` is the log of the current connection and covers the bridge run. Mission Planner holds it with an exclusive lock, so it cannot be read until Mission Planner disconnects. **Whether anything from system 42 reached Mission Planner is therefore still unknown.**
+- The Pi clock runs about 50 minutes ahead of the laptop (no RTC, no NTP over the USB link), so Pi times in this log are not laptop times.
+
+### The closed tlog: the whole chain works (19:59 laptop time)
+
+Josef disconnected Mission Planner at 19:58:42. On disconnect Mission Planner moves the log to `logs\FIXED_WING\1\`. Scan of `2026-11-04 19-08-38.tlog` (19:08:40 to 19:58:42):
+
+- **System 42, component 191: 2,253 `LANDING_TARGET` and 120 `HEARTBEAT`.** So Pi camera, detection, serial link, Pixhawk and the Pixhawk's forwarding to USB all work. This is the first proof of the chain on real hardware, and it meets the pass condition of next-steps item 3.
+- Arrival times: 954 messages in 19:50 (about 16 per second), 39 in 19:51, none until 19:57, then 471 and 789. The gaps are the marker being out of view. Only 120 heartbeats in 50 minutes confirms the heartbeat goes out only with detections.
+- Contents: `target_num 9`, `frame 12` (body FRD), `type 2`, `position_valid 1`. Distance 0.085 to 0.413 m, median 0.158 m, for the 3.2 cm print held by hand.
+- System 1 sent no status text mentioning precision landing in that window, so nothing yet shows the controller acting on the target.
+
+Why the inspector showed nothing is not explained. The messages were in Mission Planner's own log, so it is a display question, not a link fault.
+
+### Open
+
+- Find where the inspector shows system 42, or confirm it does not.
+- Evidence that ArduPlane's precision-landing code uses the target, not just that the message arrives. The firmware is Plane and the bridge was only tested against Copter in SITL.
+- The bridge's heartbeat only goes out alongside a detection. A companion that is silent whenever the marker is out of view looks the same as a dead one; consider sending the heartbeat every second regardless.
+- The parameter check needs all six of `PLND_ENABLED 1`, `PLND_TYPE 1`, `PLND_EST_TYPE 0`, `PLND_ALT_MIN 0`, `PLND_ALT_MAX 0`, `SERIAL2_PROTOCOL 2`. One changed parameter cannot satisfy it, since `PLND_ENABLED` was 0 and the others were at defaults. The `PLND_` family may only show up in Mission Planner after `PLND_ENABLED` is set to 1 and the parameters are refreshed or the controller rebooted.
+- First run without `--dry-run` (next-steps item 3 pass condition): MAVProxy must be stopped first.

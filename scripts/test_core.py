@@ -26,6 +26,7 @@ from precland_core import (  # noqa: E402
     FRAME_HEADER,
     FRAME_MAGIC,
     build_detector,
+    build_mavlink,
     load_config,
     pack_frame_header,
     parse_markers,
@@ -135,6 +136,21 @@ def main() -> int:
         and (width, height, channels, number, size) == (FRAME_WIDTH, FRAME_HEIGHT, 3, 7, FRAME_WIDTH * FRAME_HEIGHT * 3),
         "header round-trips",
     )
+
+    print("MAVLink endpoint and baud from the config:")
+    check(build_mavlink(config, None, True).baud is None, "no mavlink_baud in the SITL config leaves the default")
+    pi_config = load_config(REPO_ROOT / "pi" / "pi_landing_config.json")
+    pi_mavlink = build_mavlink(pi_config, None, True)
+    check(
+        pi_mavlink.endpoint == pi_config["mavlink_endpoint"] and pi_mavlink.baud == pi_config["mavlink_baud"],
+        f"Pi config gives {pi_mavlink.endpoint} at {pi_mavlink.baud} baud",
+    )
+    try:
+        build_mavlink({"mavlink_endpoint": "/dev/serial0", "mavlink_baud": 921}, None, True)
+        shorthand_rejected = False
+    except ValueError:
+        shorthand_rejected = True
+    check(shorthand_rejected, "ArduPilot shorthand 921 is rejected as a baud rate")
 
     print("All checks passed.")
     return 0

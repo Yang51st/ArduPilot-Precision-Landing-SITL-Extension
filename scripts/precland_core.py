@@ -240,9 +240,11 @@ class TcpFrameSource:
 
 
 class MavlinkLandingTarget:
-    def __init__(self, endpoint: str, dry_run: bool = False) -> None:
+    def __init__(self, endpoint: str, dry_run: bool = False, baud: int | None = None) -> None:
         self.endpoint = endpoint
         self.dry_run = dry_run
+        # Only serial endpoints use baud; None leaves pymavlink's default.
+        self.baud = baud
         self.connection = None
         self.target_system = 1
         self.target_component = 1
@@ -252,12 +254,15 @@ class MavlinkLandingTarget:
         if self.dry_run:
             print("MAVLink: dry-run mode; LANDING_TARGET messages will not be sent", flush=True)
             return
-        print(f"MAVLink: connecting to {self.endpoint}", flush=True)
+        at_baud = f" at {self.baud} baud" if self.baud is not None else ""
+        print(f"MAVLink: connecting to {self.endpoint}{at_baud}", flush=True)
+        options: dict[str, Any] = {} if self.baud is None else {"baud": self.baud}
         self.connection = mavutil.mavlink_connection(
             self.endpoint,
             source_system=42,
             source_component=mavutil.mavlink.MAV_COMP_ID_ONBOARD_COMPUTER,
             autoreconnect=True,
+            **options,
         )
         heartbeat = self.connection.wait_heartbeat(timeout=5)
         if heartbeat is None:
@@ -304,7 +309,7 @@ class MavlinkLandingTarget:
             if name not in received or not math.isclose(received[name], expected, abs_tol=0.01)
         ]
         if incorrect:
-            raise RuntimeError("SITL precision-landing parameters are incorrect: " + ", ".join(incorrect))
+            raise RuntimeError("ArduPilot precision-landing parameters are incorrect: " + ", ".join(incorrect))
         print("MAVLink: ArduPilot precision-landing parameters verified", flush=True)
 
     @staticmethod
@@ -438,7 +443,13 @@ def build_detector(config: dict[str, Any], calibration_file: Path | None = None)
 
 
 def build_mavlink(config: dict[str, Any], endpoint_override: str | None, dry_run: bool) -> MavlinkLandingTarget:
-    return MavlinkLandingTarget(endpoint_override or config["mavlink_endpoint"], dry_run)
+    baud = config.get("mavlink_baud")
+    if baud is not None:
+        baud = int(baud)
+        # ArduPilot's SERIALn_BAUD uses 921 for 921600; pymavlink needs the real rate.
+        if baud < 1200:
+            raise ValueError(f"mavlink_baud {baud} must be the full rate in bits per second, e.g. 921600")
+    return MavlinkLandingTarget(endpoint_override or config["mavlink_endpoint"], dry_run, baud)
 
 
 FrameCallback = Callable[[np.ndarray, "Detection | None"], None]

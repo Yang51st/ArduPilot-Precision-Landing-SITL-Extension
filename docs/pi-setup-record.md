@@ -107,7 +107,7 @@ From `mav.parm`. Only `SERIAL2_BAUD` differs from the board default among the se
 | `SERIAL2_BAUD` | 921 | 921600 baud, as the ArduPilot page prescribes |
 | `SERIAL1_PROTOCOL` | 23 | RC input (CRSF/ELRS) on TELEM1 |
 | `SERIAL0_BAUD` / `SERIAL7_PROTOCOL` | 115 / 2 | USB console and second USB MAVLink endpoint, used by Mission Planner |
-| `PLND_ENABLED` | **0** | Precision landing is not enabled on the real vehicle yet. The bridge's parameter check will refuse to run until `PLND_ENABLED 1`, `PLND_TYPE 1`, `PLND_EST_TYPE 0`, `PLND_ALT_MIN 0`, `PLND_ALT_MAX 0`, `SERIAL2_PROTOCOL 2` are all set |
+| `PLND_ENABLED` | **0** on 2026-10-31, **1** since 2026-11-04 | On 2026-11-04 Mission Planner's tlog shows all six set (`PLND_TYPE 1`, `PLND_EST_TYPE 0`, `PLND_ALT_MIN 0`, `PLND_ALT_MAX 0`), with `SERIAL2_OPTIONS` and every `MAV*_OPTIONS` at 0. Before that: precision landing was not enabled and the bridge's parameter check refused to run until `PLND_ENABLED 1`, `PLND_TYPE 1`, `PLND_EST_TYPE 0`, `PLND_ALT_MIN 0`, `PLND_ALT_MAX 0`, `SERIAL2_PROTOCOL 2` are all set |
 | `RC5_OPTION` | 153 | Arm/disarm switch |
 | `ARMING_SKIPCHK` | 37406 | Several pre-arm checks are skipped. Review before any flight |
 | `BRD_SAFETY_DEFLT` | 0 | Safety switch disabled at boot |

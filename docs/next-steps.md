@@ -43,12 +43,12 @@ Right now the Pi detects the marker but has nobody to tell. The link is a serial
 
 Still open on this item:
 
-- Software side: the core needs two config keys, `mavlink_endpoint` as `/dev/serial0` and `mavlink_baud` 921600, passed through to pymavlink. Then the Pi config stops saying `not-configured-until-flight-controller-is-wired`.
+- ~~Software side: the core needs two config keys, `mavlink_endpoint` as `/dev/serial0` and `mavlink_baud` 921600, passed through to pymavlink.~~ Written 2026-11-04 on the laptop, `test_core.py` passes, deployed to the Pi the same day. The baud is the full 921600; the Pixhawk's `SERIAL2_BAUD 921` is ArduPilot shorthand and the core rejects it.
 - Only one program can hold `/dev/serial0`. Stop MAVProxy before the bridge runs without `--dry-run`.
 - The flight controller is ArduPlane (QuadPlane), not Copter. Check that the `REQUIRED_PARAMETERS` list and the `LANDING_TARGET` handling match Plane's precision-landing path before relying on SITL results.
 - Decide about the OpenCV 5.0 pip wheel that MAVProxy pulled into the venv (details in the record).
 
-Pass condition: start the bridge without `--dry-run`; it prints "connected to system 1" and then "parameters verified", the same two lines seen in SITL.
+Pass condition: start the bridge without `--dry-run`; it prints "connected to system 1" and then "parameters verified", the same two lines seen in SITL. **Passed 2026-11-04**: the bridge ran against the Pixhawk and Mission Planner's tlog recorded 2,253 `LANDING_TARGET` messages from the Pi (process log has the detail).
 
 ### 4. Parameter check for real hardware
 

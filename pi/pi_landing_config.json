@@ -9,5 +9,6 @@
   "camera_sensor_width": 1640,
   "camera_sensor_height": 1232,
   "camera_fps": 20.0,
-  "mavlink_endpoint": "not-configured-until-flight-controller-is-wired"
+  "mavlink_endpoint": "/dev/serial0",
+  "mavlink_baud": 921600
 }

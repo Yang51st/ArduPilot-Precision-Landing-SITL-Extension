@@ -7,10 +7,13 @@ camera through Picamera2, or from a USB webcam through OpenCV with
 drawn on them, are also served to a laptop running view_frames.py over the
 same APSM stream protocol that Simulink uses, so the laptop needs nothing new.
 
-Until a flight controller is wired up, always run with --dry-run:
+For bench work without a flight controller, run with --dry-run:
 
     .venv/bin/python pi_landing_bridge.py --config pi_landing_config.json \
         --dry-run --publish 0.0.0.0:5600
+
+Without --dry-run it opens the config's mavlink_endpoint at mavlink_baud,
+so nothing else (MAVProxy for example) may be holding that serial port.
 """
 
 from __future__ import annotations
@@ -216,7 +219,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--publish-scale", type=float, default=1.0, help="shrink published frames, e.g. 0.5")
     parser.add_argument("--no-overlay", action="store_true", help="publish raw frames without the detection drawn")
     parser.add_argument("--calibration", type=Path, help="camera calibration JSON")
-    parser.add_argument("--mavlink", help="override pymavlink endpoint (deferred until a flight controller is wired)")
+    parser.add_argument("--mavlink", help="override the config's pymavlink endpoint, e.g. /dev/serial0")
     parser.add_argument("--dry-run", action="store_true", help="detect but do not send MAVLink")
     return parser.parse_args()
 
@@ -239,12 +242,6 @@ def main() -> int:
     else:
         frame_source = OpenCvFrameSource(args.camera_index)
 
-    if not args.dry_run:
-        print(
-            "Warning: no flight controller link has been set up yet; "
-            "use --dry-run until the UART work is done",
-            flush=True,
-        )
     mavlink = build_mavlink(config, args.mavlink, args.dry_run)
 
     stop_event = threading.Event()
