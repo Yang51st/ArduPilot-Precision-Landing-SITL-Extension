@@ -2,8 +2,8 @@
 % Stop and restart the Simulink model after changing this file.
 
 configFolder = fileparts(mfilename('fullpath'));
-landingConfig = jsondecode(fileread(fullfile(configFolder, ...
-    'aruco_landing_config.json')));
+allConfig = jsondecode(fileread(fullfile(configFolder, 'landing_config.json')));
+landingConfig = allConfig.sim;
 
 % Replace this with any square ArUco PNG/JPG. The image is reloaded each run.
 markerImageFile = fullfile(configFolder, landingConfig.marker_image);
@@ -32,5 +32,5 @@ cameraImageHeight = landingConfig.camera_height;
 cameraFramePeriodSeconds = 1 / landingConfig.camera_fps;
 
 % The Python companion-style bridge connects here for raw RGB frames.
-cameraFrameHost = landingConfig.frame_host;
-cameraFramePort = landingConfig.frame_port;
+[cameraFrameHost, cameraFramePortText] = strtok(landingConfig.frame_endpoint, ':');
+cameraFramePort = str2double(cameraFramePortText(2:end));

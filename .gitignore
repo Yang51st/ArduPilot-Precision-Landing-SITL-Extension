@@ -4,6 +4,8 @@ sitl-state/
 *.slxc
 .DS_Store
 NN/
+ardupilot/
+start-sitl.command
 verify_*
 slprj/
 *.autosave

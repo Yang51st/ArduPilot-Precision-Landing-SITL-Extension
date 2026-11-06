@@ -1,0 +1,32 @@
+{
+  "marker_family": "DICT_4X4_250",
+  "sim": {
+    "markers": [
+      {"id": 9, "size_m": 2.2},
+      {"id": 10, "size_m": 0.3}
+    ],
+    "marker_image": "landing-pad.png",
+    "marker_image_width_m": 4.492,
+    "marker_north_m": 0.0,
+    "marker_east_m": 0.0,
+    "marker_yaw_deg": 0.0,
+    "ground_down_m": 0.0,
+    "camera_hfov_deg": 70.0,
+    "camera_width": 320,
+    "camera_height": 240,
+    "camera_fps": 20.0,
+    "frame_endpoint": "127.0.0.1:5600",
+    "mavlink_endpoint": "tcp:127.0.0.1:5763"
+  },
+  "pi": {
+    "markers": [{"id": 9, "size_m": 0.032}],
+    "camera_hfov_deg": 62.2,
+    "camera_width": 640,
+    "camera_height": 480,
+    "camera_sensor_width": 1640,
+    "camera_sensor_height": 1232,
+    "camera_fps": 20.0,
+    "mavlink_endpoint": "/dev/serial0",
+    "mavlink_baud": 921600
+  }
+}
