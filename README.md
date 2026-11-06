@@ -7,6 +7,7 @@ Simulink camera model or a Raspberry Pi Camera V2.
 ## Layout
 
 - `main.py` — detection, pose estimation, camera input, and MAVLink output.
+- `calibrate_camera.py` — checkerboard image capture and camera calibration.
 - `landing_config.json` — shared marker, camera, and connection settings.
 - `precision-landing.parm` — ArduPilot precision-landing parameters.
 - `simulation/` — the Simulink model, its MATLAB classes, landing-pad image,
@@ -86,6 +87,37 @@ The detector recovers roll, pitch, and yaw. All three axes are placed in the
 `LANDING_TARGET` quaternion, while yaw is also enforced with
 `MAV_CMD_CONDITION_YAW` because ArduPilot precision landing does not consume the
 quaternion itself. For a calibrated camera, pass `--calibration camera.json`.
+
+### Camera calibration
+
+Use a flat 9x6 inner-corner checkerboard. This captures 20 different views and
+then calibrates (Picamera2 is selected automatically on a Pi):
+
+```bash
+.venv/bin/python calibrate_camera.py capture
+```
+
+Or calibrate pictures already saved in `calibration_images/`:
+
+```bash
+.venv/bin/python calibrate_camera.py calibrate
+```
+
+To watch the annotated camera feed on a computer connected over SSH, install
+`ffplay` there and run:
+
+```bash
+ssh pi@PI_ADDRESS 'cd /path/to/APSM && .venv/bin/python calibrate_camera.py capture --stream' \
+  | ffplay -f mjpeg -i -
+```
+
+The video shows detected checkerboard corners and the saved-image count.
+Progress messages remain in the terminal because only video is sent through
+standard output.
+
+Use `--columns` and `--rows` for another checkerboard. Keep `--width` and
+`--height` equal to the camera resolution in `landing_config.json`, then run
+`main.py pi --calibration camera.json`.
 
 The optional verification helpers are run with:
 
