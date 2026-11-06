@@ -2,7 +2,7 @@
 % Stop and restart the Simulink model after changing this file.
 
 configFolder = fileparts(mfilename('fullpath'));
-allConfig = jsondecode(fileread(fullfile(configFolder, 'landing_config.json')));
+allConfig = jsondecode(fileread(fullfile(configFolder, '..', 'landing_config.json')));
 landingConfig = allConfig.sim;
 
 % Replace this with any square ArUco PNG/JPG. The image is reloaded each run.

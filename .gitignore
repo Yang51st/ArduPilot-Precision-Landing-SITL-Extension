@@ -1,12 +1,11 @@
 .venv/
-sitl-state/
+simulation/sitl-state/
+simulation/start-sitl.command
 *.log
 *.slxc
 .DS_Store
 NN/
 ardupilot/
-start-sitl.command
-verify_*
 slprj/
 *.autosave
 __pycache__/
