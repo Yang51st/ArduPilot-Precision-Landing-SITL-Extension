@@ -9,7 +9,7 @@ Set up and proven on 2026-11-11. The Pi starts the precision-landing bridge by i
 | Service | `precland.service`, at `/etc/systemd/system/precland.service` on the Pi |
 | Copy in the repo | `pi/precland.service` (on the `pi-bridge` branch) |
 | What it runs | `/home/watarrow/APSM/.venv/bin/python main.py pi`, from `/home/watarrow/APSM`, as user `watarrow` |
-| Code | `main.py` from the `reduced` branch. `landing_config.json` on the Pi lists marker ID 0 at 0.18 m, an edit that is not in git |
+| Code | `main.py` from the `reduced` branch. `landing_config.json` on the Pi lists marker ID 0 at 0.18 m; that deployed value is now also tracked in git |
 | On a crash or exit | Restarted after 2 seconds |
 | State | Enabled and running |
 

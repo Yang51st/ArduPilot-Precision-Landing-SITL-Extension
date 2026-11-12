@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ def find_corners(gray, size, fast=False):
     return cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
 
 
-def camera_frames(width, height, camera_index):
+def camera_frames(width, height, camera_index, sensor_width, sensor_height):
     """Use Picamera2 when available, otherwise a normal OpenCV camera."""
     try:
         from picamera2 import Picamera2
@@ -44,14 +45,19 @@ def camera_frames(width, height, camera_index):
         return
 
     camera = Picamera2()
-    # Picamera2's BGR888 format returns RGB byte order.
-    config = camera.create_still_configuration(main={"size": (width, height), "format": "BGR888"})
+    # Match main.py's full-FOV sensor mode. Without the raw size, Picamera2 may
+    # select the Camera V2's cropped 640x480 sensor mode and produce calibration
+    # intrinsics that are invalid for the 1640x1232 flight stream.
+    config = camera.create_video_configuration(
+        main={"size": (width, height), "format": "YUV420"},
+        raw={"size": (sensor_width, sensor_height)},
+    )
     camera.configure(config)
     camera.start()
     print("Using Picamera2", file=sys.stderr)
     try:
         while True:
-            yield cv2.cvtColor(camera.capture_array("main"), cv2.COLOR_RGB2GRAY)
+            yield camera.capture_array("main")[:height, :width]
     finally:
         camera.stop()
         camera.close()
@@ -63,7 +69,9 @@ def capture(args):
     saved, last_save, previous = 0, 0.0, []
     print("Move the checkerboard around. Press Ctrl+C to stop early.", file=sys.stderr)
     try:
-        for gray in camera_frames(args.width, args.height, args.camera):
+        for gray in camera_frames(
+            args.width, args.height, args.camera, args.sensor_width, args.sensor_height
+        ):
             corners = find_corners(gray, (args.columns, args.rows), fast=True)
             if corners is not None:
                 points = corners.reshape(-1, 2)
@@ -136,6 +144,14 @@ def calibrate(args):
     rms, matrix, distortion, _, _ = cv2.calibrateCamera(
         object_points, image_points, image_size, None, None
     )
+    calibrated_hfov = math.degrees(2 * math.atan(image_size[0] / (2 * matrix[0, 0])))
+    if args.expected_hfov and not math.isclose(
+        calibrated_hfov, args.expected_hfov, rel_tol=0.20
+    ):
+        raise RuntimeError(
+            f"calibration horizontal FOV is {calibrated_hfov:.1f} degrees, expected about "
+            f"{args.expected_hfov:.1f}; confirm the sensor mode and recapture the images"
+        )
     result = {
         "camera_matrix": matrix.tolist(),
         "distortion": distortion.ravel().tolist(),
@@ -143,18 +159,27 @@ def calibrate(args):
     }
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"Calibration RMS error: {rms:.3f} pixels", file=sys.stderr)
+    print(f"Calibration horizontal FOV: {calibrated_hfov:.1f} degrees", file=sys.stderr)
     print(f"Wrote {args.output}", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("capture", "calibrate"))
-    parser.add_argument("--images", type=Path, default=Path("calibration_images"))
+    parser.add_argument("--images", type=Path, default=Path("calibration_images_960x720"))
     parser.add_argument("--output", type=Path, default=Path("camera.json"))
-    parser.add_argument("--columns", type=int, default=9, help="inner corners across")
-    parser.add_argument("--rows", type=int, default=6, help="inner corners down")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--columns", type=int, default=10, help="inner corners across")
+    parser.add_argument("--rows", type=int, default=7, help="inner corners down")
+    parser.add_argument("--width", type=int, default=960)
+    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--sensor-width", type=int, default=1640)
+    parser.add_argument("--sensor-height", type=int, default=1232)
+    parser.add_argument(
+        "--expected-hfov",
+        type=float,
+        default=62.2,
+        help="reject a likely wrong sensor mode; use 0 to disable",
+    )
     parser.add_argument("--count", type=int, default=20)
     parser.add_argument("--camera", type=int, default=0, help="OpenCV camera index")
     parser.add_argument("--stream", action="store_true", help="write annotated MJPEG to stdout")

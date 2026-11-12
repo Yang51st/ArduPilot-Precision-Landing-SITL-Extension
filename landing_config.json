@@ -20,13 +20,14 @@
     "mavlink_endpoint": "tcp:127.0.0.1:5763"
   },
   "pi": {
-    "markers": [{"id": 9, "size_m": 0.032}],
+    "markers": [{"id": 0, "size_m": 0.18}],
     "camera_hfov_deg": 62.2,
-    "camera_width": 640,
-    "camera_height": 480,
+    "camera_width": 960,
+    "camera_height": 720,
+    "camera_format": "YUV420",
     "camera_sensor_width": 1640,
     "camera_sensor_height": 1232,
-    "camera_fps": 20.0,
+    "camera_fps": 30.0,
     "landing_yaw_offset_deg": 0.0,
     "yaw_command_rate_deg_s": 30.0,
     "yaw_tolerance_deg": 2.0,
