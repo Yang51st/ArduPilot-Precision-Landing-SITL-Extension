@@ -26,9 +26,10 @@ from pymavlink import mavutil
 
 
 FRAME_HEADER = struct.Struct("<4sIIIII")
-# Camera coordinates are right/down/forward. The target frame is forward
-# (toward the marker's top edge), right, down, matching MAV_FRAME_BODY_FRD.
-CAMERA_TO_BODY = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=np.float64)
+# Camera coordinates are right/down/forward. This camera is permanently mounted
+# 180 degrees about its optical axis: image bottom points aircraft-forward and
+# image left points aircraft-right. Convert that fixed mounting to body FRD.
+CAMERA_TO_BODY = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], dtype=np.float64)
 ARUCO_FROM_TARGET = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]], dtype=np.float64)
 REQUIRED_PARAMETERS = {
     "PLND_ENABLED": 1.0,
@@ -62,8 +63,7 @@ class Detection:
 
     @property
     def body_frd(self) -> np.ndarray:
-        x, y, z = self.camera_xyz
-        return np.array([-y, x, z], dtype=np.float32)
+        return (CAMERA_TO_BODY @ self.camera_xyz).astype(np.float32)
 
     @property
     def distance(self) -> float:
