@@ -11,6 +11,7 @@ import threading
 import time
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -104,6 +105,16 @@ class ArucoDetectorTests(unittest.TestCase):
 
 
 class LandingTargetTests(unittest.TestCase):
+    def test_qland_is_active_only_when_armed_in_qland_mode(self) -> None:
+        target = main.LandingTarget("unused", None, True, {})
+
+        target.flight_mode = "QLAND"
+        self.assertFalse(target.qland_active)
+        target.armed = True
+        self.assertTrue(target.qland_active)
+        target.flight_mode = "QRTL"
+        self.assertFalse(target.qland_active)
+
     def test_sends_metric_body_frd_position_and_independent_heartbeat(self) -> None:
         class FakeMav:
             def __init__(self) -> None:
@@ -140,9 +151,83 @@ class LandingTargetTests(unittest.TestCase):
         self.assertEqual(fields[1], 7)
         self.assertEqual(fields[2], main.mavutil.mavlink.MAV_FRAME_BODY_FRD)
         self.assertAlmostEqual(fields[5], math.sqrt(14), places=6)
-        np.testing.assert_allclose(fields[8:11], [-2.0, 1.0, 3.0])
+        np.testing.assert_allclose(fields[8:11], [2.0, -1.0, 3.0])
         self.assertEqual(fields[13], 1)
         self.assertEqual(len(target.connection.mav.heartbeats), 1)
+
+
+class QLandVideoLoggerTests(unittest.TestCase):
+    def test_background_logger_writes_only_while_qland_is_active(self) -> None:
+        written = threading.Event()
+        released = threading.Event()
+        writers = []
+
+        class FakeWriter:
+            def __init__(self, path, _codec, fps, size) -> None:
+                self.path = Path(path)
+                self.fps = fps
+                self.size = size
+                self.frames = []
+                writers.append(self)
+
+            def isOpened(self) -> bool:
+                return True
+
+            def write(self, frame: np.ndarray) -> None:
+                self.frames.append(frame)
+                written.set()
+
+            def release(self) -> None:
+                released.set()
+
+        detection = main.Detection(
+            marker_id=7,
+            size_m=0.06,
+            camera_xyz=np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            body_rpy=np.zeros(3, dtype=np.float32),
+            body_quaternion=(1.0, 0.0, 0.0, 0.0),
+            image_corners=np.array([[10, 10], [90, 10], [90, 90], [10, 90]], dtype=np.float32),
+        )
+        image = np.full((120, 160), 128, dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            main.cv2, "VideoWriter", side_effect=FakeWriter
+        ):
+            logger = main.QLandVideoLogger(
+                {
+                    "qland_video_directory": "logs",
+                    "camera_fps": 30,
+                    "qland_video_fps": 30,
+                    "qland_video_width": 80,
+                },
+                Path(directory),
+            )
+            logger.update(False, image, detection)
+            self.assertFalse(written.wait(0.05))
+            logger.update(True, image, detection)
+            self.assertTrue(written.wait(2))
+            logger.update(False)
+            self.assertTrue(released.wait(2))
+            logger.close()
+
+        self.assertEqual(len(writers), 1)
+        self.assertEqual(writers[0].path.parent.name, "logs")
+        self.assertEqual(writers[0].path.suffix, ".mp4")
+        self.assertEqual(writers[0].fps, 30)
+        self.assertEqual(writers[0].size, (80, 60))
+        self.assertEqual(writers[0].frames[0].shape, (60, 80, 3))
+
+    def test_annotation_labels_a_lost_target(self) -> None:
+        frame = main.QLandVideoLogger._annotate(
+            np.zeros((48, 64), dtype=np.uint8),
+            None,
+            datetime.now().astimezone(),
+            1.5,
+            (64, 48),
+        )
+
+        self.assertEqual(frame.shape, (48, 64, 3))
+        self.assertGreater(int(frame.max()), 0)
 
 
 class PiFramesTests(unittest.TestCase):

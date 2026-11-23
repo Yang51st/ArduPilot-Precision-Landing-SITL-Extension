@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -60,6 +61,7 @@ class Detection:
     camera_xyz: np.ndarray
     body_rpy: np.ndarray
     body_quaternion: tuple[float, float, float, float]
+    image_corners: np.ndarray | None = None
 
     @property
     def body_frd(self) -> np.ndarray:
@@ -194,7 +196,7 @@ class ArucoDetector:
         aruco_to_camera = cv2.Rodrigues(rotation_vector)[0]
         target_to_body = CAMERA_TO_BODY @ aruco_to_camera @ ARUCO_FROM_TARGET
         rpy, quaternion = orientation_from_rotation(target_to_body)
-        return Detection(marker_id, size, xyz, rpy, quaternion)
+        return Detection(marker_id, size, xyz, rpy, quaternion, points)
 
 
 class SimulinkFrames:
@@ -327,6 +329,238 @@ class PiFrames:
             camera.close()
 
 
+class QLandVideoLogger:
+    """Write a low-rate annotated QLAND video without blocking detection."""
+
+    def __init__(self, config: dict, config_directory: Path) -> None:
+        self.enabled = bool(config.get("qland_video_logging", True))
+        directory = Path(config.get("qland_video_directory", "flight_logs"))
+        self.directory = directory if directory.is_absolute() else config_directory / directory
+        self.fps = float(config.get("qland_video_fps", config.get("camera_fps", 5.0)))
+        self.source_fps = float(config.get("camera_fps", self.fps))
+        self.capture_every_frame = self.fps >= self.source_fps
+        self.width = int(config.get("qland_video_width", 640))
+        self.codec = str(config.get("qland_video_codec", "mp4v"))
+        if self.fps <= 0 or self.width <= 0:
+            raise ValueError("qland_video_fps and qland_video_width must be positive")
+        if len(self.codec) != 4:
+            raise ValueError("qland_video_codec must contain exactly four characters")
+
+        self._condition = threading.Condition()
+        self._active = False
+        self._session = 0
+        self._next_frame_at = 0.0
+        self._latest = None
+        self._dropped = 0
+        self._stop = False
+        self._worker = None
+        if self.enabled:
+            self._worker = threading.Thread(target=self._run, name="qland-video", daemon=True)
+            self._worker.start()
+
+    def update(
+        self,
+        active: bool,
+        image: np.ndarray | None = None,
+        detection: Detection | None = None,
+    ) -> None:
+        """Update QLAND state and offer a frame; this method never waits for the encoder."""
+        if not self.enabled:
+            return
+        now = time.monotonic()
+        with self._condition:
+            if active != self._active:
+                self._active = active
+                if active:
+                    self._session += 1
+                    self._next_frame_at = now
+                else:
+                    self._latest = None
+                self._condition.notify()
+            if (
+                not active
+                or image is None
+                or (not self.capture_every_frame and now < self._next_frame_at)
+            ):
+                return
+            self._next_frame_at = now + 1 / self.fps
+            if self._latest is not None:
+                self._dropped += 1
+            # Picamera2 supplies a fresh capture array for every frame, so passing
+            # this reference avoids a full-frame copy on the detection path.
+            self._latest = (self._session, image, detection, time.time(), now)
+            self._condition.notify()
+
+    def close(self) -> None:
+        if self._worker is None:
+            return
+        with self._condition:
+            self._stop = True
+            self._active = False
+            self._latest = None
+            self._condition.notify()
+        self._worker.join(timeout=5)
+
+    def _run(self) -> None:
+        writer = None
+        writer_session = None
+        path = None
+        frame_count = 0
+        dropped_at_start = 0
+        failed_session = None
+        started_at = 0.0
+
+        def finish() -> None:
+            nonlocal writer, writer_session, path, frame_count
+            if writer is None:
+                return
+            writer.release()
+            dropped = self._dropped - dropped_at_start
+            print(
+                f"Video: saved {path} ({frame_count} frames, {dropped} encoder drops)",
+                flush=True,
+            )
+            writer = None
+            writer_session = None
+            path = None
+            frame_count = 0
+
+        while True:
+            with self._condition:
+                self._condition.wait_for(
+                    lambda: self._stop
+                    or (writer is not None and (not self._active or writer_session != self._session))
+                    or (self._active and self._latest is not None)
+                )
+                stopped = self._stop
+                active = self._active
+                session = self._session
+                item = self._latest if active else None
+                if item is not None:
+                    self._latest = None
+
+            if writer is not None and (not active or writer_session != session):
+                finish()
+            if stopped:
+                finish()
+                return
+            if item is None or failed_session == session:
+                continue
+
+            item_session, image, detection, captured_wall_time, captured_monotonic = item
+            if item_session != session:
+                continue
+            captured_at = datetime.fromtimestamp(captured_wall_time).astimezone()
+            height, width = image.shape[:2]
+            output_width = max(2, min(width, self.width))
+            output_width -= output_width % 2
+            output_height = max(2, round(height * output_width / width))
+            output_height -= output_height % 2
+
+            if writer is None:
+                try:
+                    self.directory.mkdir(parents=True, exist_ok=True)
+                    stamp = captured_at.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                    path = self.directory / f"qland_{stamp}.mp4"
+                    writer = cv2.VideoWriter(
+                        str(path),
+                        cv2.VideoWriter_fourcc(*self.codec),
+                        self.fps,
+                        (output_width, output_height),
+                    )
+                    if not writer.isOpened():
+                        writer.release()
+                        writer = None
+                        raise RuntimeError(f"OpenCV could not open codec {self.codec}")
+                except Exception as error:
+                    failed_session = session
+                    print(f"Video: cannot start QLAND recording: {error}", file=sys.stderr, flush=True)
+                    continue
+                writer_session = session
+                frame_count = 0
+                dropped_at_start = self._dropped
+                started_at = captured_monotonic
+                print(f"Video: recording QLAND to {path}", flush=True)
+
+            try:
+                frame = self._annotate(
+                    image,
+                    detection,
+                    captured_at,
+                    captured_monotonic - started_at,
+                    (output_width, output_height),
+                )
+                writer.write(frame)
+                frame_count += 1
+            except Exception as error:
+                failed_session = session
+                print(f"Video: QLAND recording failed: {error}", file=sys.stderr, flush=True)
+                finish()
+
+    @staticmethod
+    def _annotate(
+        image: np.ndarray,
+        detection: Detection | None,
+        captured_at: datetime,
+        elapsed: float,
+        output_size: tuple[int, int],
+    ) -> np.ndarray:
+        source_height, source_width = image.shape[:2]
+        if (source_width, source_height) != output_size:
+            image = cv2.resize(image, output_size, interpolation=cv2.INTER_AREA)
+        if image.ndim == 2:
+            frame = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        else:
+            # Simulink and Picamera2 RGB888 frames use RGB channel order. The
+            # default flight path is grayscale YUV, so this conversion is off
+            # the critical path in either case.
+            frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        scale_x = output_size[0] / source_width
+        scale_y = output_size[1] / source_height
+
+        detected = detection is not None
+        color = (40, 220, 40) if detected else (30, 30, 230)
+        status = "TARGET DETECTED" if detected else "TARGET LOST"
+        timestamp = captured_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        lines = [f"QLAND  {timestamp}  +{elapsed:06.1f}s", status]
+        if detection is not None:
+            body_x, body_y, body_z = map(float, detection.body_frd)
+            roll, pitch, yaw = np.degrees(detection.body_rpy)
+            lines[1] += f"  id {detection.marker_id}  size {detection.size_m:.3f}m"
+            lines.extend(
+                [
+                    f"FRD m  X{body_x:+.2f}  Y{body_y:+.2f}  Z{body_z:+.2f}",
+                    f"RPY deg  R{roll:+.1f}  P{pitch:+.1f}  Y{yaw:+.1f}",
+                ]
+            )
+            if detection.image_corners is not None:
+                corners = detection.image_corners.astype(np.float32).copy()
+                corners[:, 0] *= scale_x
+                corners[:, 1] *= scale_y
+                corners = np.rint(corners).astype(np.int32)
+                cv2.polylines(frame, [corners], True, color, 2, cv2.LINE_AA)
+                center = tuple(np.rint(corners.mean(axis=0)).astype(int))
+                cv2.drawMarker(frame, center, color, cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+
+        font_scale = 0.40 if output_size[0] <= 320 else 0.52
+        line_height = 18 if output_size[0] <= 320 else 24
+        panel_height = 7 + line_height * len(lines)
+        cv2.rectangle(frame, (0, 0), (output_size[0], panel_height), (0, 0, 0), -1)
+        for index, line in enumerate(lines):
+            line_color = color if index == 1 else (255, 255, 255)
+            cv2.putText(
+                frame,
+                line,
+                (7, 17 + index * line_height),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                line_color,
+                1,
+                cv2.LINE_AA,
+            )
+        return frame
+
+
 class LandingTarget:
     def __init__(self, endpoint: str, baud: int | None, dry_run: bool, config: dict) -> None:
         self.endpoint, self.baud, self.dry_run = endpoint, baud, dry_run
@@ -340,6 +574,11 @@ class LandingTarget:
         self.yaw_rate = float(config.get("yaw_command_rate_deg_s", 30))
         self.yaw_tolerance = math.radians(float(config.get("yaw_tolerance_deg", 2)))
         self.yaw_modes = set(config.get("yaw_align_modes", ["AUTO", "LAND", "RTL"]))
+
+    @property
+    def qland_active(self) -> bool:
+        """True only while an armed aircraft reports that it is in QLAND mode."""
+        return self.armed and self.flight_mode == "QLAND"
 
     def connect(self) -> None:
         if self.dry_run:
@@ -529,6 +768,7 @@ def main() -> int:
     endpoint = args.mavlink or config["mavlink_endpoint"]
     baud = int(config["mavlink_baud"]) if config.get("mavlink_baud") else None
     target = LandingTarget(endpoint, baud, args.dry_run, config)
+    video = QLandVideoLogger(config, args.config.resolve().parent)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -551,6 +791,7 @@ def main() -> int:
                 detection_started = time.monotonic()
                 detection = detector.detect(image)
                 detection_seconds += time.monotonic() - detection_started
+                video.update(target.qland_active, image, detection)
                 if detection:
                     detections += 1
                     target.send(detection)
@@ -592,16 +833,20 @@ def main() -> int:
                     detection_seconds = 0.0
                     report_at = now
         except CameraUnavailable:
+            video.update(False)
             stop.wait(1)
         except CameraDisconnected as error:
+            video.update(False)
             if not stop.is_set():
                 print(f"Camera: {error}; retrying", file=sys.stderr, flush=True)
                 stop.wait(1)
         except (Disconnected, ConnectionError, OSError, RuntimeError) as error:
+            video.update(False)
             if not stop.is_set():
                 print(f"Bridge: {error}; retrying", file=sys.stderr, flush=True)
                 target.close()
                 stop.wait(1)
+    video.close()
     target.close()
     print("Bridge: stopped", flush=True)
     return 0

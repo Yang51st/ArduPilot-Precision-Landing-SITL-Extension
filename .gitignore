@@ -9,3 +9,4 @@ ardupilot/
 slprj/
 *.autosave
 __pycache__/
+flight_logs/

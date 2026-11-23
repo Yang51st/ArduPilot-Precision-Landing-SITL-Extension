@@ -81,6 +81,24 @@ cannot sustain at least 10-20 processed frames per second, reduce only
 `camera_width` and `camera_height` to 800x600 or 640x480; keep the 4:3 aspect
 ratio.
 
+### QLAND video logs
+
+When the armed aircraft reports `QLAND` mode, the bridge creates a timestamped
+MP4 in `flight_logs/`. Recording stops as soon as the aircraft leaves `QLAND`
+or disarms; no video is written during ordinary flight, while idle, or in dry
+run mode. Each frame shows the selected marker outline and ID, body-FRD target
+position, target attitude, and a prominent `TARGET LOST` message when decoding
+fails.
+
+Video annotation and encoding run in a background thread with a single pending
+frame. If the encoder falls behind it drops video frames instead of delaying
+target detection. The Pi logger targets the camera's full 30 fps but scales the
+960x720 camera image to 320x240 to minimize resize and encode load. The actual
+recorded rate cannot exceed the rate at which detection processes camera frames.
+These settings are controlled by
+`qland_video_logging`, `qland_video_directory`, `qland_video_fps`,
+`qland_video_width`, and `qland_video_codec` in `landing_config.json`.
+
 ## Configuration and tests
 
 `landing_config.json` has separate `sim` and `pi` sections. Each marker's
